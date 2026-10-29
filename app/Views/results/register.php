@@ -143,13 +143,13 @@
             </div>
           </div>
 
-          <div class="mb-3">
+          <!--           <div class="mb-3">
             <label class="form-label fw-bold"><i class="bi bi-award me-1"></i>Dignidad *</label>
             <select id="selDignity" class="form-select" required>
               <option value="">Seleccione una JRV primero...</option>
             </select>
             <div id="dignityStatus" class="mt-2"></div>
-          </div>
+          </div> -->
 
           <div id="candidatesContainer" class="mb-3" style="display:none">
             <label class="form-label fw-bold"><i class="bi bi-people me-1"></i>Votos por Candidato</label>
