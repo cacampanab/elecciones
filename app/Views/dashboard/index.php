@@ -14,11 +14,17 @@
     <?php endif; ?>
   </div>
   <form method="get" action="<?= base_url('dashboard') ?>" class="d-flex flex-wrap gap-2 align-items-center">
-    <select id="electionSelect" name="election_id" class="form-select form-select-sm" style="min-width:240px" onchange="document.getElementById('dignitySelect').value='0';this.form.submit()">
+    <select id="electionSelect" name="election_id" class="form-select form-select-sm" style="min-width:240px" onchange="document.getElementById('cantonSelect').value='';document.getElementById('dignitySelect').value='0';this.form.submit()">
       <?php foreach ($elections as $election): ?>
         <option value="<?= (int)$election->id ?>" <?= (int)$election->id === (int)$electionId ? 'selected' : '' ?>>
           <?= esc($election->name) ?> (<?= esc($election->status) ?>)
         </option>
+      <?php endforeach; ?>
+    </select>
+    <select id="cantonSelect" name="canton" class="form-select form-select-sm" style="min-width:210px" onchange="this.form.submit()" <?= !$cantonOptions ? 'disabled' : '' ?>>
+      <option value="">Todos los cantones</option>
+      <?php foreach ($cantonOptions as $canton): ?>
+        <option value="<?= esc($canton['value'], 'attr') ?>" <?= $canton['value'] === $cantonFilter ? 'selected' : '' ?>><?= esc($canton['label']) ?></option>
       <?php endforeach; ?>
     </select>
     <select id="dignitySelect" name="dignity_id" class="form-select form-select-sm" style="min-width:210px" onchange="this.form.submit()" <?= !$dignities ? 'disabled' : '' ?>>
@@ -94,6 +100,9 @@
   <div class="card-body py-2 d-flex flex-wrap gap-4 align-items-center small">
     <span class="text-muted">Alcance:</span>
     <span class="badge bg-primary"><?= $selectedDignity ? esc($selectedDignity->name) : 'Todas las dignidades (' . count($dignities) . ')' ?></span>
+    <?php if ($selectedCanton): ?>
+      <span class="badge bg-info text-dark"><i class="bi bi-geo-alt me-1"></i><?= esc($selectedCanton['label']) ?></span>
+    <?php endif; ?>
     <span><i class="bi bi-people me-1"></i>Participación sobre actas con resultados: <strong class="text-primary"><?= number_format($stats['participacion'], 2) ?>%</strong></span>
     <span>Votantes: <strong><?= number_format($stats['total_voters']) ?></strong></span>
     <span>Electores: <strong><?= number_format($stats['total_electores']) ?></strong></span>
@@ -106,7 +115,7 @@
   <div class="col-xl-8">
     <div class="card h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-geo-alt me-2"></i>Avance por Provincia</span>
+        <span><i class="bi bi-geo-alt me-2"></i><?= esc($breakdownTitle) ?></span>
         <span class="badge bg-light text-dark"><?= number_format($stats['received_actas']) ?> / <?= number_format($stats['expected_actas']) ?> actas</span>
       </div>
       <div class="card-body p-0">
@@ -114,7 +123,7 @@
           <table class="table table-sm table-hover align-middle mb-0">
             <thead class="table-light">
               <tr>
-                <th>Provincia</th>
+                <th><?= esc($breakdownLabel) ?></th>
                 <th class="text-end">JRV</th>
                 <?php foreach ($scopeDignities as $dignity): ?>
                   <th style="min-width:110px"><?= esc($dignity->name) ?></th>
@@ -123,11 +132,11 @@
               </tr>
             </thead>
             <tbody>
-              <?php foreach ($byProvince as $province): ?>
+              <?php foreach ($breakdownRows as $row): ?>
                 <tr>
-                  <td><strong><?= esc($province['name_province']) ?></strong></td>
-                  <td class="text-end"><?= number_format($province['total']) ?></td>
-                  <?php foreach ($scopeDignities as $dignity): $dd = $province['dignities'][(int)$dignity->id] ?? ['received' => 0, 'expected' => $province['total'], 'avance' => 0]; ?>
+                  <td><strong><?= esc($row['name']) ?></strong></td>
+                  <td class="text-end"><?= number_format($row['total']) ?></td>
+                  <?php foreach ($scopeDignities as $dignity): $dd = $row['dignities'][(int)$dignity->id] ?? ['received' => 0, 'expected' => $row['total'], 'avance' => 0]; ?>
                     <td>
                       <div class="d-flex align-items-center gap-2">
                         <small class="text-nowrap"><?= number_format($dd['received']) ?>/<?= number_format($dd['expected']) ?></small>
@@ -139,13 +148,13 @@
                   <?php endforeach; ?>
                   <td>
                     <div class="d-flex align-items-center gap-2">
-                      <span class="badge bg-<?= $province['avance'] >= 80 ? 'success' : ($province['avance'] >= 40 ? 'warning text-dark' : 'danger') ?>"><?= number_format($province['avance'], 2) ?>%</span>
-                      <small class="text-muted text-nowrap"><?= number_format($province['received']) ?>/<?= number_format($province['expected']) ?></small>
+                      <span class="badge bg-<?= $row['avance'] >= 80 ? 'success' : ($row['avance'] >= 40 ? 'warning text-dark' : 'danger') ?>"><?= number_format($row['avance'], 2) ?>%</span>
+                      <small class="text-muted text-nowrap"><?= number_format($row['received']) ?>/<?= number_format($row['expected']) ?></small>
                     </div>
                   </td>
                 </tr>
               <?php endforeach; ?>
-              <?php if (!$byProvince): ?>
+              <?php if (!$breakdownRows): ?>
                 <tr><td colspan="<?= 3 + count($scopeDignities) ?>" class="text-center text-muted py-4">Sin datos para el alcance seleccionado.</td></tr>
               <?php endif; ?>
             </tbody>

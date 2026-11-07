@@ -40,9 +40,49 @@ class DashboardController extends BaseWebController
             }
         }
 
-        $totalJrvs = $electionId
-            ? (int)$db->table('polling_stations')->where('election_id', $electionId)->countAllResults()
-            : 0;
+        $cantonOptions = [];
+        if ($electionId) {
+            $cantonOptions = $db->table('polling_stations')
+                ->select('code_province, name_province, code_canton, name_canton, COUNT(*) AS total', false)
+                ->where('election_id', $electionId)
+                ->groupBy('code_province, name_province, code_canton, name_canton')
+                ->orderBy('name_province', 'ASC')
+                ->orderBy('name_canton', 'ASC')
+                ->get()
+                ->getResultArray();
+        }
+
+        $cantonFilter = trim((string)($this->request->getGet('canton') ?? ''));
+        $selectedCanton = null;
+        $showCantonProvince = count(array_unique(array_column($cantonOptions, 'name_province'))) > 1;
+        foreach ($cantonOptions as $index => $canton) {
+            $cantonValue = $canton['code_province'] . '|' . $canton['code_canton'];
+            $cantonOptions[$index]['value'] = $cantonValue;
+            $cantonOptions[$index]['label'] = $showCantonProvince
+                ? $canton['name_province'] . ' / ' . $canton['name_canton']
+                : $canton['name_canton'];
+
+            if ($cantonValue === $cantonFilter) {
+                $selectedCanton = $cantonOptions[$index];
+            }
+        }
+        if (!$selectedCanton) {
+            $cantonFilter = '';
+        }
+
+        $cantonWhere = '';
+        $cantonParams = [];
+        if ($selectedCanton) {
+            $cantonWhere = ' AND ps.code_province = ? AND ps.code_canton = ?';
+            $cantonParams = [$selectedCanton['code_province'], $selectedCanton['code_canton']];
+        }
+
+        $totalJrvsBuilder = $db->table('polling_stations')->where('election_id', $electionId);
+        if ($selectedCanton) {
+            $totalJrvsBuilder->where('code_province', $selectedCanton['code_province'])
+                ->where('code_canton', $selectedCanton['code_canton']);
+        }
+        $totalJrvs = $electionId ? (int)$totalJrvsBuilder->countAllResults() : 0;
 
         $service = new ActaService();
         $allDignityIds = $electionId ? $service->enabledDignityIds($electionId) : [];
@@ -86,7 +126,9 @@ class DashboardController extends BaseWebController
         ];
         $statusCounts = ['registrada' => 0, 'con_novedad' => 0, 'verificada' => 0];
         $consistencyCounts = ['ok' => 0, 'error' => 0, 'sin_datos' => 0];
-        $byProvince = [];
+        $breakdownRows = [];
+        $breakdownLabel = 'Provincia';
+        $breakdownTitle = 'Avance por Provincia';
         $resultsByDignity = [];
         $pending = [];
         $pendingTotal = 0;
@@ -98,11 +140,12 @@ class DashboardController extends BaseWebController
 
             $actaStats = $db->query(
                 "SELECT COUNT(*) AS actas,
-                        COALESCE(SUM(status = 'verificada'), 0) AS verificadas,
-                        COALESCE(SUM(consistency_status = 'error' OR status = 'con_novedad'), 0) AS inconsistentes
-                 FROM uploaded_minutes
-                 WHERE election_id = ? AND is_current = 1 AND dignity_id IN ($in)",
-                $scopeParams
+                        COALESCE(SUM(um.status = 'verificada'), 0) AS verificadas,
+                        COALESCE(SUM(um.consistency_status = 'error' OR um.status = 'con_novedad'), 0) AS inconsistentes
+                 FROM uploaded_minutes um
+                 JOIN polling_stations ps ON ps.id = um.polling_station_id AND ps.election_id = um.election_id
+                 WHERE um.election_id = ? AND um.is_current = 1 AND um.dignity_id IN ($in) {$cantonWhere}",
+                array_merge($scopeParams, $cantonParams)
             )->getRow();
 
             $stats['received_actas'] = (int)($actaStats->actas ?? 0);
@@ -123,10 +166,10 @@ class DashboardController extends BaseWebController
                          AND um.election_id = ps.election_id
                          AND um.is_current = 1
                          AND um.dignity_id IN ($in)
-                     WHERE ps.election_id = ?
+                     WHERE ps.election_id = ? {$cantonWhere}
                      GROUP BY ps.id
                  ) t",
-                array_merge([$scopeCount, $scopeCount], $scopeDignityIds, [$electionId])
+                array_merge([$scopeCount, $scopeCount], $scopeDignityIds, [$electionId], $cantonParams)
             )->getRow();
 
             $stats['complete_jrvs'] = (int)($completeness->completas ?? 0);
@@ -145,10 +188,11 @@ class DashboardController extends BaseWebController
                          AND um.election_id = er.election_id
                          AND um.dignity_id = er.dignity_id
                          AND um.is_current = 1
-                     WHERE er.election_id = ? AND er.dignity_id IN ($in)
+                     JOIN polling_stations ps ON ps.id = er.polling_station_id AND ps.election_id = er.election_id
+                     WHERE er.election_id = ? AND er.dignity_id IN ($in) {$cantonWhere}
                      GROUP BY er.polling_station_id
                  ) t",
-                $scopeParams
+                array_merge($scopeParams, $cantonParams)
             )->getRow();
 
             $stats['total_voters'] = (int)($participation->votantes ?? 0);
@@ -157,86 +201,109 @@ class DashboardController extends BaseWebController
                 ? round(($stats['total_voters'] / $stats['total_electores']) * 100, 2)
                 : 0;
 
-            $statusRows = $db->table('uploaded_minutes')
-                ->select('status, COUNT(*) AS total', false)
-                ->where('election_id', $electionId)
-                ->where('is_current', 1)
-                ->whereIn('dignity_id', $scopeDignityIds)
-                ->groupBy('status')
-                ->get()
-                ->getResultArray();
+            $statusBuilder = $db->table('uploaded_minutes um')
+                ->select('um.status, COUNT(*) AS total', false)
+                ->join('polling_stations ps', 'ps.id = um.polling_station_id AND ps.election_id = um.election_id')
+                ->where('um.election_id', $electionId)
+                ->where('um.is_current', 1)
+                ->whereIn('um.dignity_id', $scopeDignityIds);
+            if ($selectedCanton) {
+                $statusBuilder->where('ps.code_province', $selectedCanton['code_province'])
+                    ->where('ps.code_canton', $selectedCanton['code_canton']);
+            }
+            $statusRows = $statusBuilder->groupBy('um.status')->get()->getResultArray();
             foreach ($statusRows as $row) {
                 if (isset($statusCounts[$row['status']])) {
                     $statusCounts[$row['status']] = (int)$row['total'];
                 }
             }
 
-            $consistencyRows = $db->table('uploaded_minutes')
-                ->select('consistency_status, COUNT(*) AS total', false)
-                ->where('election_id', $electionId)
-                ->where('is_current', 1)
-                ->whereIn('dignity_id', $scopeDignityIds)
-                ->groupBy('consistency_status')
-                ->get()
-                ->getResultArray();
+            $consistencyBuilder = $db->table('uploaded_minutes um')
+                ->select('um.consistency_status, COUNT(*) AS total', false)
+                ->join('polling_stations ps', 'ps.id = um.polling_station_id AND ps.election_id = um.election_id')
+                ->where('um.election_id', $electionId)
+                ->where('um.is_current', 1)
+                ->whereIn('um.dignity_id', $scopeDignityIds);
+            if ($selectedCanton) {
+                $consistencyBuilder->where('ps.code_province', $selectedCanton['code_province'])
+                    ->where('ps.code_canton', $selectedCanton['code_canton']);
+            }
+            $consistencyRows = $consistencyBuilder->groupBy('um.consistency_status')->get()->getResultArray();
             foreach ($consistencyRows as $row) {
                 if (isset($consistencyCounts[$row['consistency_status']])) {
                     $consistencyCounts[$row['consistency_status']] = (int)$row['total'];
                 }
             }
 
-            $provinces = $db->table('polling_stations')
-                ->select('code_province, name_province, COUNT(*) AS total', false)
-                ->where('election_id', $electionId)
-                ->groupBy('code_province, name_province')
-                ->orderBy('name_province', 'ASC')
-                ->get()
-                ->getResultArray();
+            $breakdownKey = $selectedCanton ? 'code_parish' : 'code_province';
+            $breakdownName = $selectedCanton ? 'name_parish' : 'name_province';
+            $breakdownLabel = $selectedCanton ? 'Parroquia' : 'Provincia';
+            $breakdownTitle = $selectedCanton ? 'Avance por Parroquia' : 'Avance por Provincia';
 
-            $provinceMinutes = $db->table('uploaded_minutes um')
-                ->select('ps.code_province, um.dignity_id, COUNT(*) AS recibidas', false)
-                ->join('polling_stations ps', 'ps.id = um.polling_station_id')
+            $breakdownBuilder = $db->table('polling_stations')
+                ->select("{$breakdownKey}, {$breakdownName}, COUNT(*) AS total", false)
+                ->where('election_id', $electionId)
+                ->groupBy("{$breakdownKey}, {$breakdownName}")
+                ->orderBy($breakdownName, 'ASC');
+            if ($selectedCanton) {
+                $breakdownBuilder->where('code_province', $selectedCanton['code_province'])
+                    ->where('code_canton', $selectedCanton['code_canton']);
+            }
+            $breakdown = $breakdownBuilder->get()->getResultArray();
+
+            $breakdownMinutesBuilder = $db->table('uploaded_minutes um')
+                ->select("ps.{$breakdownKey} AS breakdown_key, um.dignity_id, COUNT(*) AS recibidas", false)
+                ->join('polling_stations ps', 'ps.id = um.polling_station_id AND ps.election_id = um.election_id')
                 ->where('um.election_id', $electionId)
                 ->where('um.is_current', 1)
                 ->whereIn('um.dignity_id', $scopeDignityIds)
-                ->groupBy('ps.code_province, um.dignity_id')
-                ->get()
-                ->getResultArray();
+                ->groupBy("ps.{$breakdownKey}, um.dignity_id");
+            if ($selectedCanton) {
+                $breakdownMinutesBuilder->where('ps.code_province', $selectedCanton['code_province'])
+                    ->where('ps.code_canton', $selectedCanton['code_canton']);
+            }
+            $breakdownMinutes = $breakdownMinutesBuilder->get()->getResultArray();
 
-            $provinceMinuteMap = [];
-            foreach ($provinceMinutes as $row) {
-                $provinceMinuteMap[$row['code_province']][(int)$row['dignity_id']] = (int)$row['recibidas'];
+            $breakdownMinuteMap = [];
+            foreach ($breakdownMinutes as $row) {
+                $breakdownMinuteMap[(string)$row['breakdown_key']][(int)$row['dignity_id']] = (int)$row['recibidas'];
             }
 
-            foreach ($provinces as $province) {
-                $provinceTotal = (int)$province['total'];
-                $provinceDignities = [];
-                $provinceReceived = 0;
+            foreach ($breakdown as $item) {
+                $breakdownValue = (string)$item[$breakdownKey];
+                $breakdownTotal = (int)$item['total'];
+                $breakdownDignities = [];
+                $breakdownReceived = 0;
                 foreach ($scopeDignities as $dignity) {
                     $did = (int)$dignity->id;
-                    $received = $provinceMinuteMap[$province['code_province']][$did] ?? 0;
-                    $provinceDignities[$did] = [
+                    $received = $breakdownMinuteMap[$breakdownValue][$did] ?? 0;
+                    $breakdownDignities[$did] = [
                         'received' => $received,
-                        'expected' => $provinceTotal,
-                        'avance' => $provinceTotal > 0 ? round(($received / $provinceTotal) * 100, 2) : 0,
+                        'expected' => $breakdownTotal,
+                        'avance' => $breakdownTotal > 0 ? round(($received / $breakdownTotal) * 100, 2) : 0,
                     ];
-                    $provinceReceived += $received;
+                    $breakdownReceived += $received;
                 }
-                $provinceExpected = $provinceTotal * $scopeCount;
-                $byProvince[] = [
-                    'code_province' => $province['code_province'],
-                    'name_province' => $province['name_province'],
-                    'total' => $provinceTotal,
-                    'received' => $provinceReceived,
-                    'expected' => $provinceExpected,
-                    'avance' => $provinceExpected > 0 ? round(($provinceReceived / $provinceExpected) * 100, 2) : 0,
-                    'dignities' => $provinceDignities,
+                $breakdownExpected = $breakdownTotal * $scopeCount;
+                $breakdownRows[] = [
+                    'code' => $breakdownValue,
+                    'name' => $item[$breakdownName],
+                    'total' => $breakdownTotal,
+                    'received' => $breakdownReceived,
+                    'expected' => $breakdownExpected,
+                    'avance' => $breakdownExpected > 0 ? round(($breakdownReceived / $breakdownExpected) * 100, 2) : 0,
+                    'dignities' => $breakdownDignities,
                 ];
             }
 
             foreach ($scopeDignities as $dignity) {
                 $did = (int)$dignity->id;
-                $results = $resultModel->getResultsByDignity($electionId, $did);
+                $results = $resultModel->getResultsByDignity(
+                    $electionId,
+                    $did,
+                    $selectedCanton['code_province'] ?? null,
+                    $selectedCanton['code_canton'] ?? null
+                );
                 $totalVotes = 0;
                 foreach ($results as $result) {
                     $totalVotes += (int)$result->total_votes;
@@ -249,17 +316,19 @@ class DashboardController extends BaseWebController
                          AND um.election_id = er.election_id
                          AND um.dignity_id = er.dignity_id
                          AND um.is_current = 1
-                     WHERE er.election_id = ? AND er.dignity_id = ?",
-                    [$electionId, $did]
+                     JOIN polling_stations ps ON ps.id = er.polling_station_id AND ps.election_id = er.election_id
+                     WHERE er.election_id = ? AND er.dignity_id = ? {$cantonWhere}",
+                    array_merge([$electionId, $did], $cantonParams)
                 )->getRow();
 
                 $actaRow = $db->query(
                     "SELECT COUNT(*) AS actas,
-                            COALESCE(SUM(status = 'verificada'), 0) AS verificadas,
-                            COALESCE(SUM(consistency_status = 'error' OR status = 'con_novedad'), 0) AS inconsistencias
-                     FROM uploaded_minutes
-                     WHERE election_id = ? AND is_current = 1 AND dignity_id = ?",
-                    [$electionId, $did]
+                            COALESCE(SUM(um.status = 'verificada'), 0) AS verificadas,
+                            COALESCE(SUM(um.consistency_status = 'error' OR um.status = 'con_novedad'), 0) AS inconsistencias
+                     FROM uploaded_minutes um
+                     JOIN polling_stations ps ON ps.id = um.polling_station_id AND ps.election_id = um.election_id
+                     WHERE um.election_id = ? AND um.is_current = 1 AND um.dignity_id = ? {$cantonWhere}",
+                    array_merge([$electionId, $did], $cantonParams)
                 )->getRow();
 
                 $resultsByDignity[] = [
@@ -293,13 +362,13 @@ class DashboardController extends BaseWebController
                                WHERE a.is_active = 1
                                GROUP BY a.election_id, a.polling_station_id
                            ) a ON a.election_id = ps.election_id AND a.polling_station_id = ps.id
-                           WHERE ps.election_id = ? AND ed.dignity_id IN ($in)
+                           WHERE ps.election_id = ? AND ed.dignity_id IN ($in) {$cantonWhere}
                            GROUP BY ps.id, ps.name_province, ps.name_canton, ps.name_parish, ps.name_precinct, ps.numero_junta, ps.genero
                            HAVING COUNT(DISTINCT um.dignity_id) < ?
                            ORDER BY ps.name_province, ps.name_canton, ps.name_parish, ps.name_precinct, ps.numero_junta
                            LIMIT {$pendingLimit}";
 
-            $pending = $db->query($pendingSql, array_merge($scopeParams, [$scopeCount]))->getResult();
+            $pending = $db->query($pendingSql, array_merge($scopeParams, $cantonParams, [$scopeCount]))->getResult();
 
             $pendingCount = $db->query(
                 "SELECT COUNT(*) AS total
@@ -311,11 +380,11 @@ class DashboardController extends BaseWebController
                          AND um.election_id = ps.election_id
                          AND um.dignity_id = ed.dignity_id
                          AND um.is_current = 1
-                     WHERE ps.election_id = ? AND ed.dignity_id IN ($in)
+                     WHERE ps.election_id = ? AND ed.dignity_id IN ($in) {$cantonWhere}
                      GROUP BY ps.id
                      HAVING COUNT(DISTINCT um.dignity_id) < ?
                  ) t",
-                array_merge($scopeParams, [$scopeCount])
+                array_merge($scopeParams, $cantonParams, [$scopeCount])
             )->getRow();
             $pendingTotal = (int)($pendingCount->total ?? 0);
         }
@@ -331,7 +400,12 @@ class DashboardController extends BaseWebController
             'stats' => $stats,
             'statusCounts' => $statusCounts,
             'consistencyCounts' => $consistencyCounts,
-            'byProvince' => $byProvince,
+            'breakdownRows' => $breakdownRows,
+            'breakdownLabel' => $breakdownLabel,
+            'breakdownTitle' => $breakdownTitle,
+            'cantonOptions' => $cantonOptions,
+            'selectedCanton' => $selectedCanton,
+            'cantonFilter' => $cantonFilter,
             'resultsByDignity' => $resultsByDignity,
             'pending' => $pending,
             'pendingTotal' => $pendingTotal,

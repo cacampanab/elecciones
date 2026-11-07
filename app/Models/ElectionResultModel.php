@@ -22,14 +22,24 @@ class ElectionResultModel extends Model
     protected $createdField = 'created_at';
     protected $updatedField = 'updated_at';
 
-    public function getResultsByDignity($electionId, $dignityId)
+    public function getResultsByDignity($electionId, $dignityId, $provinceCode = null, $cantonCode = null)
     {
-        return $this->select('candidates.*, political_parties.name as party_name, political_parties.acronym as party_acronym, political_parties.list_number, political_parties.color, SUM(election_results.votes) as total_votes')
+        $builder = $this->select('candidates.*, political_parties.name as party_name, political_parties.acronym as party_acronym, political_parties.list_number, political_parties.color, SUM(election_results.votes) as total_votes')
             ->join('candidates', 'candidates.id = election_results.candidate_id')
             ->join('political_parties', 'political_parties.id = candidates.political_party_id')
             ->where('election_results.election_id', $electionId)
-            ->where('election_results.dignity_id', $dignityId)
-            ->groupBy('election_results.candidate_id')
+            ->where('election_results.dignity_id', $dignityId);
+
+        if ($provinceCode !== null && $provinceCode !== '') {
+            $builder->join('polling_stations ps', 'ps.id = election_results.polling_station_id')
+                ->where('ps.code_province', $provinceCode);
+
+            if ($cantonCode !== null && $cantonCode !== '') {
+                $builder->where('ps.code_canton', $cantonCode);
+            }
+        }
+
+        return $builder->groupBy('election_results.candidate_id')
             ->orderBy('total_votes', 'DESC')
             ->findAll();
     }
