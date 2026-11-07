@@ -173,13 +173,17 @@
             <div class="col-md-6">
               <label class="form-label fw-bold"><i class="bi bi-camera me-1"></i>Acta Electoral</label>
               <div class="border rounded p-3 text-center bg-light" id="uploadArea">
-                <input type="file" name="acta_file" id="actaFile" accept="image/*,application/pdf,.pdf" capture="environment" class="d-none" onchange="previewActa(event)">
-                <button type="button" class="btn btn-outline-primary mb-2" onclick="document.getElementById('actaFile').click()">
-                  <i class="bi bi-camera-fill me-1"></i> Tomar Foto / Adjuntar
-                </button>
-                <button type="button" class="btn btn-outline-secondary mb-2" onclick="document.getElementById('actaFile').click()">
-                  <i class="bi bi-folder me-1"></i> Galería
-                </button>
+                <!-- Input para cámara (con capture) -->
+<input type="file" name="acta_file" id="actaFileCamera" accept="image/*" capture="environment" class="d-none" onchange="previewActa(event)">
+<!-- Input para galería/archivos (sin capture) -->
+<input type="file" name="acta_file" id="actaFileGallery" accept="image/*,application/pdf,.pdf" class="d-none" onchange="previewActa(event)">
+
+<button type="button" class="btn btn-outline-primary mb-2" onclick="document.getElementById('actaFileCamera').click()">
+  <i class="bi bi-camera-fill me-1"></i> Tomar Foto
+</button>
+<button type="button" class="btn btn-outline-secondary mb-2" onclick="document.getElementById('actaFileGallery').click()">
+  <i class="bi bi-folder me-1"></i> Galería / Archivo
+</button>
                 <div id="actaPreview" class="small text-muted">
                   <i class="bi bi-file-earmark-image fs-1 d-block mb-1"></i>
                   Haga clic para tomar foto o adjuntar archivo
