@@ -234,6 +234,20 @@ class ActaService
             ->getResultArray();
         $resultDignities = array_map('intval', array_column($results, 'dignity_id'));
 
+        $listDignities = [];
+        if ($this->db->tableExists('election_list_results')) {
+            $listResults = $this->db->table('election_list_results')
+                ->select('dignity_id')
+                ->where('polling_station_id', $pollingStationId)
+                ->where('election_id', $electionId)
+                ->groupBy('dignity_id')
+                ->get()
+                ->getResultArray();
+            $listDignities = array_map('intval', array_column($listResults, 'dignity_id'));
+        }
+
+        $resultDignities = array_values(array_unique(array_merge($resultDignities, $listDignities)));
+
         $complete = count(array_diff($enabled, $minuteDignities)) === 0
             && count(array_diff($enabled, $resultDignities)) === 0;
 

@@ -12,7 +12,7 @@ class CandidateListModel extends Model
     protected $returnType = 'object';
     protected $useSoftDeletes = false;
     protected $protectFields = false;
-    protected $allowedFields = ['election_id', 'political_party_id', 'dignity_id', 'name', 'is_active'];
+    protected $allowedFields = ['election_id', 'canton_id', 'political_party_id', 'dignity_id', 'name', 'is_active'];
     protected $useTimestamps = true;
     protected $dateFormat = 'datetime';
     protected $createdField = 'created_at';

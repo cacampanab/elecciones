@@ -47,13 +47,14 @@ class ResultController extends BaseWebController
         $nullVotes = (int)($this->request->getPost('null_votes') ?? 0);
         $registeredVoters = (int)$this->request->getPost('registered_voters');
         $votes = $this->request->getPost('votes') ?: [];
+        $listVotes = $this->request->getPost('list_votes') ?: [];
         $latitude = $this->request->getPost('latitude') ?: null;
         $longitude = $this->request->getPost('longitude') ?: null;
         $notes = trim((string)$this->request->getPost('notes'));
         $reason = trim((string)$this->request->getPost('reason'));
 
-        if (!$psId || !$electionId || !$dignityId || empty($votes)) {
-            return redirect()->back()->with('error', 'Datos incompletos: seleccione la dignidad y registre los votos.');
+        if (!$psId || !$electionId || !$dignityId) {
+            return redirect()->back()->with('error', 'Datos incompletos: seleccione la JRV y la dignidad.');
         }
         if ($redirect = $this->requireAssignment($psId, $electionId)) {
             return $redirect;
@@ -62,6 +63,28 @@ class ResultController extends BaseWebController
         $service = new \App\Libraries\ActaService();
         if (!in_array($dignityId, $service->enabledDignityIds($electionId), true)) {
             return redirect()->back()->with('error', 'La dignidad no está habilitada para esta elección.');
+        }
+
+        $dignity = model('App\Models\DignityModel')->find($dignityId);
+        if ($dignity && in_array($dignity->slug, ['concejal-urbano', 'concejal-rural'], true)) {
+            return $this->saveConcejalResults(
+                $psId,
+                $electionId,
+                $dignityId,
+                $totalVoters,
+                $blankVotes,
+                $nullVotes,
+                $registeredVoters,
+                is_array($listVotes) ? $listVotes : [],
+                $latitude,
+                $longitude,
+                $notes,
+                $reason
+            );
+        }
+
+        if (empty($votes)) {
+            return redirect()->back()->with('error', 'Datos incompletos: seleccione la dignidad y registre los votos.');
         }
 
         $candidateModel = model('App\Models\CandidateModel');
@@ -258,6 +281,274 @@ class ResultController extends BaseWebController
         }
         if ($currentMinute && $currentMinute->status === 'verificada') {
             $msg .= ' El acta fue desverificada por la edición.';
+        }
+
+        return redirect()->to(base_url('results/register'))
+            ->with($consistency['status'] === 'error' ? 'warning' : 'success', $msg);
+    }
+
+    private function saveConcejalResults(
+        int $psId,
+        int $electionId,
+        int $dignityId,
+        int $totalVoters,
+        int $blankVotes,
+        int $nullVotes,
+        int $registeredVoters,
+        array $listVotes,
+        ?string $latitude,
+        ?string $longitude,
+        string $notes,
+        string $reason
+    ) {
+        $station = model('App\Models\PollingStationModel')->find($psId);
+        if (!$station || (int)$station->election_id !== $electionId) {
+            return redirect()->back()->with('error', 'La JRV no pertenece a la elección seleccionada.');
+        }
+
+        $canton = $this->db->table('precincts pr')
+            ->select('c.id AS canton_id')
+            ->join('parishes pa', 'pa.id = pr.parish_id')
+            ->join('cantons c', 'c.id = pa.canton_id')
+            ->where('pr.id', (int)$station->precinct_id)
+            ->get()
+            ->getRow();
+        if (!$canton) {
+            return redirect()->back()->with('error', 'No se pudo determinar el cantón de la JRV.');
+        }
+
+        $lists = $this->db->table('candidate_lists')
+            ->select('id')
+            ->where('election_id', $electionId)
+            ->where('canton_id', (int)$canton->canton_id)
+            ->where('dignity_id', $dignityId)
+            ->where('is_active', 1)
+            ->get()
+            ->getResult();
+        if (!$lists) {
+            return redirect()->back()->with('error', 'No hay listas de concejales para el cantón de esta JRV.');
+        }
+
+        $validListIds = array_map(static fn($list) => (int)$list->id, $lists);
+        $validVotes = [];
+        foreach ($listVotes as $listId => $value) {
+            $listId = (int)$listId;
+            if (!in_array($listId, $validListIds, true)) {
+                continue;
+            }
+            $votes = filter_var($value === '' ? 0 : $value, FILTER_VALIDATE_INT);
+            if ($votes === false || $votes < 0) {
+                return redirect()->back()->with('error', 'Los votos por lista deben ser números enteros mayores o iguales a cero.');
+            }
+            $validVotes[$listId] = $votes;
+        }
+        if (!$validVotes) {
+            return redirect()->back()->with('error', 'No hay listas válidas para registrar los votos.');
+        }
+
+        $totalListVotes = array_sum($validVotes);
+        $sum = $totalListVotes + $blankVotes + $nullVotes;
+        $errors = [];
+        $warnings = [];
+
+        if ($sum !== $totalVoters) {
+            $diff = $sum - $totalVoters;
+            $sign = $diff > 0 ? '+' : '';
+            $errors[] = "Votos de listas + blancos + nulos = {$sum}, sufragantes = {$totalVoters} (diferencia {$sign}{$diff})";
+        }
+        if ($totalVoters > $registeredVoters) {
+            $errors[] = "Sufragantes ({$totalVoters}) supera electores del acta ({$registeredVoters})";
+        }
+        if ((int)$station->numero_electores !== $registeredVoters) {
+            $warnings[] = 'Electores del acta (' . $registeredVoters . ') no coincide con el distributivo (' . (int)$station->numero_electores . ')';
+        }
+        foreach ($validVotes as $votes) {
+            if ($votes > $totalVoters) {
+                $errors[] = 'Una lista tiene más votos que el total de sufragantes.';
+                break;
+            }
+        }
+
+        $consistency = [
+            'status' => $errors ? 'error' : 'ok',
+            'detail' => $errors || $warnings ? implode(' | ', array_merge($errors, $warnings)) : null,
+            'warnings' => $warnings,
+        ];
+
+        $service = new \App\Libraries\ActaService();
+        $userId = (int)session()->get('user_id');
+        $currentMinute = $service->currentMinute($psId, $electionId, $dignityId);
+        $hasResults = model('App\Models\ElectionListResultModel')
+            ->where('polling_station_id', $psId)
+            ->where('election_id', $electionId)
+            ->where('dignity_id', $dignityId)
+            ->countAllResults() > 0;
+        $isCorrection = $currentMinute || $hasResults;
+
+        if (is_operator() && $currentMinute && $currentMinute->status !== 'con_novedad') {
+            return redirect()->back()->with('error', 'El acta de esta dignidad ya fue registrada. Solo puede corregirla cuando tenga una novedad.');
+        }
+        if ($currentMinute && $currentMinute->status === 'verificada' && !is_supervisor_or_admin()) {
+            return redirect()->back()->with('error', 'El acta de esta dignidad está verificada y no puede modificarse.');
+        }
+        if ($isCorrection && $reason === '') {
+            return redirect()->back()->with('error', 'Indique el motivo de la corrección.');
+        }
+
+        $actaFile = $this->request->getFile('acta_file');
+        $hasFile = $actaFile && $actaFile->isValid() && $actaFile->getSize() > 0
+            && $actaFile->getTempName() && file_exists($actaFile->getTempName());
+
+        if (!$currentMinute && !$hasFile) {
+            return redirect()->back()->with('error', 'Debe adjuntar el acta de esta dignidad.');
+        }
+
+        $ext = null;
+        if ($hasFile) {
+            $ext = strtolower($actaFile->getExtension());
+            if (!in_array($ext, ['jpg', 'jpeg', 'png', 'pdf']) || $actaFile->getSize() > 10 * 1024 * 1024) {
+                return redirect()->back()->with('error', 'El acta debe ser JPG, PNG o PDF de máximo 10 MB.');
+            }
+        }
+
+        $minuteModel = model('App\Models\UploadedMinuteModel');
+        $newStatus = $consistency['status'] === 'error' ? 'con_novedad' : 'registrada';
+
+        $this->db->transBegin();
+        try {
+            $versionsCount = $this->db->table('result_versions')
+                ->where('polling_station_id', $psId)
+                ->where('election_id', $electionId)
+                ->where('dignity_id', $dignityId)
+                ->countAllResults();
+
+            if ($isCorrection && $versionsCount === 0) {
+                $previousRows = model('App\Models\ElectionListResultModel')->forStation($psId, $electionId, $dignityId);
+                $previousData = [];
+                foreach ($previousRows as $row) {
+                    $previousData[] = [
+                        'candidate_list_id' => (int)$row->candidate_list_id,
+                        'votes' => (int)$row->votes,
+                        'blank_votes' => (int)$row->blank_votes,
+                        'null_votes' => (int)$row->null_votes,
+                        'total_voters' => (int)$row->total_voters,
+                        'registered_voters' => (int)$row->registered_voters,
+                    ];
+                }
+
+                $this->db->table('result_versions')->insert([
+                    'polling_station_id' => $psId,
+                    'election_id' => $electionId,
+                    'dignity_id' => $dignityId,
+                    'version' => 1,
+                    'data' => json_encode(['list_results' => $previousData], JSON_UNESCAPED_UNICODE),
+                    'reason' => 'Estado previo a la corrección',
+                    'created_by' => $userId,
+                    'created_at' => date('Y-m-d H:i:s'),
+                ]);
+            }
+
+            $this->db->table('election_list_results')
+                ->where('polling_station_id', $psId)
+                ->where('election_id', $electionId)
+                ->where('dignity_id', $dignityId)
+                ->delete();
+
+            foreach ($validVotes as $listId => $votes) {
+                $this->db->table('election_list_results')->insert([
+                    'polling_station_id' => $psId,
+                    'election_id' => $electionId,
+                    'canton_id' => (int)$canton->canton_id,
+                    'dignity_id' => $dignityId,
+                    'candidate_list_id' => $listId,
+                    'votes' => $votes,
+                    'blank_votes' => $blankVotes,
+                    'null_votes' => $nullVotes,
+                    'total_voters' => $totalVoters,
+                    'registered_voters' => $registeredVoters,
+                    'is_verified' => 0,
+                    'verified_by' => null,
+                    'verified_at' => null,
+                    'registered_by' => $userId,
+                    'latitude' => $latitude,
+                    'longitude' => $longitude,
+                    'created_at' => date('Y-m-d H:i:s'),
+                    'updated_at' => date('Y-m-d H:i:s'),
+                ]);
+            }
+
+            if ($hasFile) {
+                $prev = $service->currentMinute($psId, $electionId, $dignityId);
+                $version = $prev ? ((int)$prev->version + 1) : 1;
+                if ($prev) {
+                    $minuteModel
+                        ->where('polling_station_id', $psId)
+                        ->where('election_id', $electionId)
+                        ->where('dignity_id', $dignityId)
+                        ->where('is_current', 1)
+                        ->set(['is_current' => 0])
+                        ->update();
+                }
+
+                $newName = $actaFile->getRandomName();
+                $folder = FCPATH . 'uploads/minutes/' . $electionId . '/' . $psId;
+                if (!is_dir($folder)) {
+                    mkdir($folder, 0777, true);
+                }
+                $actaFile->move($folder, $newName);
+
+                $minuteModel->insert([
+                    'polling_station_id' => $psId,
+                    'election_id' => $electionId,
+                    'dignity_id' => $dignityId,
+                    'filename' => $newName,
+                    'original_name' => $actaFile->getClientName(),
+                    'file_path' => $folder . '/' . $newName,
+                    'file_type' => $ext,
+                    'file_size' => $actaFile->getSize(),
+                    'version' => $version,
+                    'is_current' => 1,
+                    'status' => $newStatus,
+                    'notes' => $notes ?: null,
+                    'consistency_status' => $consistency['status'],
+                    'consistency_detail' => $consistency['detail'],
+                    'uploaded_by' => $userId,
+                    'latitude' => $latitude,
+                    'longitude' => $longitude,
+                ]);
+            } elseif ($currentMinute) {
+                $minuteModel->update($currentMinute->id, [
+                    'status' => $newStatus,
+                    'notes' => $notes ?: $currentMinute->notes,
+                    'consistency_status' => $consistency['status'],
+                    'consistency_detail' => $consistency['detail'],
+                    'verified_by' => null,
+                    'verified_at' => null,
+                ]);
+            }
+
+            $service->updateStationStatus($psId, $electionId);
+            $this->db->transCommit();
+        } catch (\Throwable $e) {
+            $this->db->transRollback();
+            log_message('error', 'Error al guardar resultados de concejales: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'No se pudo guardar: ' . $e->getMessage());
+        }
+
+        $this->logAudit('register_concejal_results', 'election_list_results', $psId, null, [
+            'election_id' => $electionId,
+            'dignity_id' => $dignityId,
+            'lists' => count($validVotes),
+            'total_list_votes' => $totalListVotes,
+            'consistency' => $consistency['status'],
+            'reason' => $reason ?: null,
+        ]);
+
+        $msg = 'Resultados de concejales registrados para ' . count($validVotes) . ' lista(s).';
+        if ($consistency['status'] === 'error') {
+            $msg .= ' Inconsistencia detectada: ' . $consistency['detail'];
+        } elseif (!empty($consistency['warnings'])) {
+            $msg .= ' Advertencia: ' . implode(' | ', $consistency['warnings']);
         }
 
         return redirect()->to(base_url('results/register'))

@@ -152,7 +152,7 @@
           </div> -->
 
           <div id="candidatesContainer" class="mb-3" style="display:none">
-            <label class="form-label fw-bold"><i class="bi bi-people me-1"></i>Votos por Candidato</label>
+            <label class="form-label fw-bold" id="votesLabel"><i class="bi bi-people me-1"></i>Votos por Candidato</label>
             <div id="candidatesList" class="border rounded p-2"></div>
           </div>
 
@@ -245,6 +245,7 @@
   let currentPsId = null;
   let currentElectionId = null;
   let currentDignityId = null;
+  let currentDignitySlug = null;
   let currentMinute = null;
   let hasExistingResults = false;
   let currentDistributivo = 0;
@@ -400,6 +401,7 @@
     currentPsId = psId;
     currentElectionId = eid;
     currentDignityId = null;
+    currentDignitySlug = null;
     currentMinute = null;
     hasExistingResults = false;
     currentDistributivo = parseInt(electores || '0', 10) || 0;
@@ -439,7 +441,7 @@
       const data = await r.json();
       sel.innerHTML = '<option value="">Seleccione dignidad...</option>';
       data.forEach(d => {
-        sel.innerHTML += '<option value="' + d.id + '">' + escapeHtml(d.name) + '</option>';
+        sel.innerHTML += '<option value="' + d.id + '" data-slug="' + escapeHtml(d.slug || '') + '">' + escapeHtml(d.name) + '</option>';
       });
       sel.disabled = false;
       if (data.length === 1) {
@@ -451,10 +453,58 @@
     }
   }
 
+  function applyDignityLoaded(totals, hasExisting, minute) {
+    currentMinute = (minute && minute.id) ? minute : null;
+    hasExistingResults = !!hasExisting;
+
+    if (hasExistingResults && totals) {
+      document.getElementById('f_total_voters').value = totals.total_voters || 0;
+      document.getElementById('f_blank').value = totals.blank_votes || 0;
+      document.getElementById('f_null').value = totals.null_votes || 0;
+      document.getElementById('f_registered').value = totals.registered_voters || 0;
+    } else {
+      document.getElementById('f_total_voters').value = '';
+      document.getElementById('f_blank').value = 0;
+      document.getElementById('f_null').value = 0;
+      document.getElementById('f_registered').value = currentDistributivo || '';
+    }
+
+    const isCorrection = !!(currentMinute || hasExistingResults);
+    document.getElementById('correctionFields').style.display = isCorrection ? 'flex' : 'none';
+    document.getElementById('f_reason').required = isCorrection;
+    if (currentMinute && currentMinute.notes) {
+      document.getElementById('f_notes').value = currentMinute.notes;
+    }
+
+    let lock = false;
+    let message = '';
+    if (currentMinute) {
+      if (currentMinute.status === 'verificada') {
+        if (!isSupervisorOrAdminUser) {
+          lock = true;
+          message = 'Acta verificada. Solo un supervisor o administrador puede modificarla.';
+        } else {
+          message = 'Acta verificada: al guardar cambios se desverificará y se creará una nueva versión.';
+        }
+      } else if (isOperatorUser && currentMinute.status !== 'con_novedad') {
+        lock = true;
+        message = 'Acta ya registrada. Solo puede corregirla cuando tenga una novedad.';
+      } else if (currentMinute.status === 'con_novedad') {
+        message = 'Acta con novedad: puede corregirla indicando el motivo.';
+      }
+    }
+
+    setFormLocked(lock);
+    renderDignityStatus(message);
+    renderActaPreview(currentMinute);
+  }
+
   async function onDignityChange() {
     const sel = document.getElementById('selDignity');
     const dignityId = parseInt(sel.value || '0', 10);
+    const selectedOption = sel.options[sel.selectedIndex];
     currentDignityId = dignityId || null;
+    currentDignitySlug = selectedOption?.dataset?.slug || null;
     currentMinute = null;
     hasExistingResults = false;
     document.getElementById('fDignityId').value = dignityId || '';
@@ -467,6 +517,7 @@
     const container = document.getElementById('candidatesContainer');
     const list = document.getElementById('candidatesList');
     const box = document.getElementById('dignityStatus');
+    const label = document.getElementById('votesLabel');
     box.innerHTML = '';
 
     if (!dignityId || !currentElectionId || !currentPsId) {
@@ -476,12 +527,46 @@
       return;
     }
 
-    list.innerHTML = '<div class="text-center py-2 text-muted">Cargando candidatos...</div>';
+    const isListDignity = currentDignitySlug === 'concejal-urbano' || currentDignitySlug === 'concejal-rural';
+    label.innerHTML = isListDignity
+      ? '<i class="bi bi-list-ol me-1"></i>Votos por Lista'
+      : '<i class="bi bi-people me-1"></i>Votos por Candidato';
+
+    list.innerHTML = '<div class="text-center py-2 text-muted">Cargando ' + (isListDignity ? 'listas' : 'candidatos') + '...</div>';
     container.style.display = 'block';
 
     try {
+      if (isListDignity) {
+        const [rLists, rMinute] = await Promise.all([
+          fetch(baseUrl + 'ajax/concejal-lists-by-station/' + currentPsId + '/' + dignityId),
+          fetch(baseUrl + 'ajax/station-current-acta/' + currentPsId + '?dignity_id=' + dignityId)
+        ]);
+        const payload = await rLists.json();
+        const lists = Array.isArray(payload.lists) ? payload.lists : [];
+        const minute = await rMinute.json();
+
+        if (!lists.length) {
+          list.innerHTML = '<div class="text-center py-2 text-muted">No hay listas de concejales para el cantón de esta JRV.</div>';
+        } else {
+          list.innerHTML = lists.map(item => {
+            const candidates = Array.isArray(item.candidates) ? item.candidates : [];
+            const names = candidates.map(c => escapeHtml(c.first_name + ' ' + c.last_name)).join(', ');
+            return '<div class="row g-1 align-items-center mb-1 py-1 border-bottom">' +
+              '<div class="col-1 text-center"><span class="badge" style="background:' + (item.party_color || '#6c757d') + '">' + escapeHtml(item.list_number || '?') + '</span></div>' +
+              '<div class="col-6"><span class="small"><strong>' + escapeHtml(item.party_acronym || '') + '</strong> ' + escapeHtml(item.party_name || '') + '</span>' +
+              (names ? '<div class="small text-muted text-truncate">' + names + '</div>' : '') + '</div>' +
+              '<div class="col-3"><input type="number" inputmode="numeric" name="list_votes[' + item.id + ']" class="form-control form-control-sm vote-input" placeholder="0" value="' + (item.votes || 0) + '" min="0" step="1" onkeypress="return event.charCode>=48&&event.charCode<=57" oninput="if(this.value)this.value=this.value.replace(/[^0-9]/g,\'\')"></div>' +
+              '<div class="col-2"></div>' +
+              '</div>';
+          }).join('');
+        }
+
+        applyDignityLoaded(payload.totals, !!(payload.totals && payload.totals.has_results), minute);
+        return;
+      }
+
       const [rCand, rExist, rMinute] = await Promise.all([
-        fetch(baseUrl + 'ajax/candidates-by-dignity/' + currentElectionId + '/' + dignityId),
+        fetch(baseUrl + 'ajax/candidates-by-dignity/' + currentElectionId + '/' + dignityId + '?polling_station_id=' + currentPsId),
         fetch(baseUrl + 'ajax/station-results/' + currentPsId + '/' + dignityId),
         fetch(baseUrl + 'ajax/station-current-acta/' + currentPsId + '?dignity_id=' + dignityId)
       ]);
@@ -489,9 +574,6 @@
       const candidates = Array.isArray(candRaw) ? candRaw : (candRaw.data || []);
       const existing = await rExist.json();
       const minute = await rMinute.json();
-
-      currentMinute = (minute && minute.id) ? minute : null;
-      hasExistingResults = Array.isArray(existing) && existing.length > 0;
 
       const votesMap = {};
       (Array.isArray(existing) ? existing : []).forEach(r => votesMap[r.candidate_id] = r);
@@ -512,47 +594,9 @@
         }).join('');
       }
 
-      if (hasExistingResults) {
-        const first = existing[0];
-        document.getElementById('f_total_voters').value = first.total_voters || 0;
-        document.getElementById('f_blank').value = first.blank_votes || 0;
-        document.getElementById('f_null').value = first.null_votes || 0;
-        document.getElementById('f_registered').value = first.registered_voters || 0;
-      } else {
-        document.getElementById('f_total_voters').value = '';
-        document.getElementById('f_blank').value = 0;
-        document.getElementById('f_null').value = 0;
-        document.getElementById('f_registered').value = currentDistributivo || '';
-      }
-
-      const isCorrection = !!(currentMinute || hasExistingResults);
-      document.getElementById('correctionFields').style.display = isCorrection ? 'flex' : 'none';
-      document.getElementById('f_reason').required = isCorrection;
-      if (currentMinute && currentMinute.notes) {
-        document.getElementById('f_notes').value = currentMinute.notes;
-      }
-
-      let lock = false;
-      let message = '';
-      if (currentMinute) {
-        if (currentMinute.status === 'verificada') {
-          if (!isSupervisorOrAdminUser) {
-            lock = true;
-            message = 'Acta verificada. Solo un supervisor o administrador puede modificarla.';
-          } else {
-            message = 'Acta verificada: al guardar cambios se desverificará y se creará una nueva versión.';
-          }
-        } else if (isOperatorUser && currentMinute.status !== 'con_novedad') {
-          lock = true;
-          message = 'Acta ya registrada. Solo puede corregirla cuando tenga una novedad.';
-        } else if (currentMinute.status === 'con_novedad') {
-          message = 'Acta con novedad: puede corregirla indicando el motivo.';
-        }
-      }
-
-      setFormLocked(lock);
-      renderDignityStatus(message);
-      renderActaPreview(currentMinute);
+      const hasExisting = Array.isArray(existing) && existing.length > 0;
+      const totals = hasExisting ? existing[0] : null;
+      applyDignityLoaded(totals, hasExisting, minute);
     } catch (e) {
       list.innerHTML = '<div class="text-center py-2 text-danger">Error al cargar los datos de la dignidad</div>';
     }

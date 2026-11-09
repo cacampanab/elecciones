@@ -327,6 +327,9 @@
           <a href="<?= base_url('elections') ?>" class="nav-link <?= strpos(current_url(), '/elections') !== false ? 'active' : '' ?>">
             <i class="bi bi-vote-yes"></i> Elecciones
           </a>
+          <a href="<?= base_url('election-seats') ?>" class="nav-link <?= strpos(current_url(), '/election-seats') !== false ? 'active' : '' ?>">
+            <i class="bi bi-grid-3x3-gap-fill"></i> Escaños
+          </a>
           <a href="<?= base_url('dignities') ?>" class="nav-link <?= strpos(current_url(), '/dignities') !== false ? 'active' : '' ?>">
             <i class="bi bi-award-fill"></i> Dignidades
           </a>
@@ -360,6 +363,9 @@
         <?php if (session()->get('role') !== 'Operador Electoral'): ?>
           <a href="<?= base_url('results') ?>" class="nav-link <?= strpos(current_url(), '/results') !== false && strpos(current_url(), '/register') === false ? 'active' : '' ?>">
             <i class="bi bi-bar-chart-fill"></i> Resultados
+          </a>
+          <a href="<?= base_url('concejales') ?>" class="nav-link <?= strpos(current_url(), '/concejales') !== false ? 'active' : '' ?>">
+            <i class="bi bi-diagram-3-fill"></i> Concejales / D’Hondt
           </a>
         <?php endif; ?>
         <a href="<?= base_url('minutes') ?>" class="nav-link <?= strpos(current_url(), '/minutes') !== false ? 'active' : '' ?>">

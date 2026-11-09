@@ -33,6 +33,10 @@ $routes->get('elections', 'Web\ElectionController::index');
 $routes->post('elections/save', 'Web\ElectionController::save');
 $routes->get('elections/delete/(:num)', 'Web\ElectionController::delete/$1');
 
+// Election seats
+$routes->get('election-seats', 'Web\ElectionSeatController::index');
+$routes->post('election-seats/save', 'Web\ElectionSeatController::save');
+
 // Dignities
 $routes->get('dignities', 'Web\DignityController::index');
 $routes->post('dignities/save', 'Web\DignityController::save');
@@ -78,6 +82,7 @@ $routes->get('ajax/station-results/(:num)/(:num)', 'Web\TerritorialAjaxControlle
 $routes->get('ajax/station-current-acta/(:num)', 'Web\TerritorialAjaxController::stationCurrentActa/$1');
 $routes->get('ajax/audit-logs', 'Web\TerritorialAjaxController::auditLogs');
 $routes->get('ajax/candidates-by-dignity/(:num)/(:num)', 'Web\TerritorialAjaxController::candidatesByDignity/$1/$2');
+$routes->get('ajax/concejal-lists-by-station/(:num)/(:num)', 'Web\TerritorialAjaxController::concejalListsByStation/$1/$2');
 $routes->get('ajax/election-dignities/(:num)', 'Web\TerritorialAjaxController::electionDignities/$1');
 $routes->get('ajax/results-by-dignity/(:num)/(:num)', 'Web\TerritorialAjaxController::resultsByDignity/$1/$2');
 $routes->get('ajax/minute-data/(:num)', 'Web\TerritorialAjaxController::minuteData/$1');
@@ -93,6 +98,13 @@ $routes->get('assignments/delete/(:num)', 'Web\AssignmentController::delete/$1')
 $routes->get('results', 'Web\ResultController::index');
 $routes->get('results/register', 'Web\ResultController::register');
 $routes->post('results/save', 'Web\ResultController::save');
+
+// Concejales / D'Hondt
+$routes->get('concejales', 'Web\ConcejalController::index');
+$routes->post('concejales/candidates/save', 'Web\ConcejalController::saveCandidate');
+$routes->post('concejales/candidates/update', 'Web\ConcejalController::updateCandidates');
+$routes->get('concejales/candidates/delete/(:num)', 'Web\ConcejalController::deleteCandidate/$1');
+$routes->post('concejales/votes/save', 'Web\ConcejalController::saveVotes');
 
 // Inconsistencies
 $routes->get('inconsistencies', 'Web\InconsistencyController::index');

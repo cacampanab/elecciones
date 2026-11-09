@@ -30,13 +30,96 @@ class TerritorialAjaxController extends BaseWebController
 
     public function candidatesByDignity($electionId, $dignityId)
     {
-        $data = model('App\Models\CandidateModel')
+        $builder = model('App\Models\CandidateModel')
             ->select('candidates.*, political_parties.name as party_name, political_parties.acronym as party_acronym, political_parties.list_number, political_parties.color as party_color')
             ->join('political_parties', 'political_parties.id = candidates.political_party_id')
             ->where('candidates.election_id', $electionId)
-            ->where('candidates.dignity_id', $dignityId)
-            ->findAll();
-        return $this->response->setJSON($data);
+            ->where('candidates.dignity_id', $dignityId);
+
+        $pollingStationId = (int)($this->request->getVar('polling_station_id') ?? 0);
+        $dignity = model('App\Models\DignityModel')->find((int)$dignityId);
+        if ($pollingStationId && $dignity && $dignity->level === 'cantonal') {
+            $station = model('App\Models\PollingStationModel')->find($pollingStationId);
+            if ($station) {
+                $canton = $this->db->table('precincts pr')
+                    ->select('c.id AS canton_id')
+                    ->join('parishes pa', 'pa.id = pr.parish_id')
+                    ->join('cantons c', 'c.id = pa.canton_id')
+                    ->where('pr.id', (int)$station->precinct_id)
+                    ->get()
+                    ->getRow();
+                if ($canton) {
+                    $builder->where('candidates.canton_id', (int)$canton->canton_id);
+                }
+            }
+        }
+
+        return $this->response->setJSON($builder->findAll());
+    }
+
+    public function concejalListsByStation($psId, $dignityId)
+    {
+        $station = model('App\Models\PollingStationModel')->find((int)$psId);
+        if (!$station) {
+            return $this->response->setJSON(['lists' => [], 'totals' => null]);
+        }
+
+        $canton = $this->db->table('precincts pr')
+            ->select('c.id AS canton_id')
+            ->join('parishes pa', 'pa.id = pr.parish_id')
+            ->join('cantons c', 'c.id = pa.canton_id')
+            ->where('pr.id', (int)$station->precinct_id)
+            ->get()
+            ->getRow();
+
+        if (!$canton) {
+            return $this->response->setJSON(['lists' => [], 'totals' => null]);
+        }
+
+        $lists = $this->db->table('candidate_lists cl')
+            ->select('cl.*, p.name AS party_name, p.acronym AS party_acronym, p.list_number, p.color AS party_color')
+            ->join('political_parties p', 'p.id = cl.political_party_id')
+            ->where('cl.election_id', (int)$station->election_id)
+            ->where('cl.canton_id', (int)$canton->canton_id)
+            ->where('cl.dignity_id', (int)$dignityId)
+            ->where('cl.is_active', 1)
+            ->orderBy('p.list_number', 'ASC')
+            ->orderBy('p.name', 'ASC')
+            ->get()
+            ->getResult();
+
+        $results = model('App\Models\ElectionListResultModel')
+            ->forStation((int)$psId, (int)$station->election_id, (int)$dignityId);
+        $existing = [];
+        $totals = null;
+        foreach ($results as $result) {
+            $existing[(int)$result->candidate_list_id] = (int)$result->votes;
+            if ($totals === null) {
+                $totals = [
+                    'blank_votes' => (int)$result->blank_votes,
+                    'null_votes' => (int)$result->null_votes,
+                    'total_voters' => (int)$result->total_voters,
+                    'registered_voters' => (int)$result->registered_voters,
+                    'has_results' => true,
+                ];
+            }
+        }
+
+        foreach ($lists as $list) {
+            $list->votes = $existing[(int)$list->id] ?? 0;
+            $list->candidates = $this->db->table('candidates')
+                ->where('candidate_list_id', (int)$list->id)
+                ->where('is_active', 1)
+                ->orderBy('position', 'ASC')
+                ->orderBy('id', 'ASC')
+                ->get()
+                ->getResult();
+        }
+
+        return $this->response->setJSON([
+            'lists' => $lists,
+            'totals' => $totals,
+        ]);
     }
 
     public function stationsByPrecinct()
@@ -244,42 +327,122 @@ class TerritorialAjaxController extends BaseWebController
     {
         $psId = $this->request->getVar('polling_station_id');
         $model = model('App\Models\ElectionResultModel');
+        $dignity = model('App\Models\DignityModel')->find((int)$dignityId);
+        $isCantonal = $dignity && $dignity->level === 'cantonal';
+        $stationCantonId = null;
 
         if ($psId) {
-            $data = $model
+            $dataBuilder = $model
                 ->select('election_results.*, candidates.first_name, candidates.last_name, political_parties.name as party_name, political_parties.acronym as party_acronym, political_parties.list_number, political_parties.color')
                 ->join('candidates', 'candidates.id = election_results.candidate_id')
                 ->join('political_parties', 'political_parties.id = candidates.political_party_id')
                 ->where('election_results.election_id', $electionId)
                 ->where('election_results.dignity_id', $dignityId)
-                ->where('election_results.polling_station_id', $psId)
-                ->findAll();
+                ->where('election_results.polling_station_id', $psId);
+
+            if ($isCantonal) {
+                $station = model('App\Models\PollingStationModel')->find((int)$psId);
+                if ($station) {
+                    $canton = $this->db->table('precincts pr')
+                        ->select('c.id AS canton_id')
+                        ->join('parishes pa', 'pa.id = pr.parish_id')
+                        ->join('cantons c', 'c.id = pa.canton_id')
+                        ->where('pr.id', (int)$station->precinct_id)
+                        ->get()
+                        ->getRow();
+                    if ($canton) {
+                        $stationCantonId = (int)$canton->canton_id;
+                        $dataBuilder->where('candidates.canton_id', $stationCantonId);
+                    }
+                }
+            }
+
+            $data = $dataBuilder->findAll();
             // Add acta info
             $minute = model('App\Models\UploadedMinuteModel')
                 ->where('polling_station_id', $psId)
                 ->where('dignity_id', $dignityId)
                 ->where('is_current', 1)
                 ->first();
-            // Get aggregate for this station
-            $agg = $model
+            // Get aggregate for this station, limited to the canton when applicable.
+            $aggBuilder = $model
                 ->select('MAX(blank_votes) as total_blank, MAX(null_votes) as total_null, MAX(total_voters) as total_voters')
                 ->where('election_results.election_id', $electionId)
                 ->where('election_results.dignity_id', $dignityId)
-                ->where('election_results.polling_station_id', $psId)
-                ->get()->getRow();
+                ->where('election_results.polling_station_id', $psId);
+            if ($isCantonal && $stationCantonId) {
+                $aggBuilder->join('candidates c', 'c.id = election_results.candidate_id')
+                    ->where('c.canton_id', $stationCantonId);
+            }
+            $agg = $aggBuilder->get()->getRow();
         } else {
-            $data = $model
+            $provinceCode = trim((string)($this->request->getVar('province_code') ?? ''));
+            $cantonCode = trim((string)($this->request->getVar('canton_code') ?? ''));
+
+            $builder = $model
                 ->select('candidates.first_name, candidates.last_name, political_parties.name as party_name, political_parties.acronym as party_acronym, political_parties.list_number, political_parties.color, SUM(election_results.votes) as total_votes')
                 ->join('candidates', 'candidates.id = election_results.candidate_id')
                 ->join('political_parties', 'political_parties.id = candidates.political_party_id')
                 ->where('election_results.election_id', $electionId)
-                ->where('election_results.dignity_id', $dignityId)
+                ->where('election_results.dignity_id', $dignityId);
+
+            $cantonId = null;
+            if ($cantonCode !== '') {
+                $cantonRow = $this->db->table('cantons')->select('id')->where('code', $cantonCode)->get()->getRow();
+                $cantonId = $cantonRow ? (int)$cantonRow->id : null;
+            }
+
+            if ($provinceCode !== '' || $cantonCode !== '') {
+                $builder->join('polling_stations ps', 'ps.id = election_results.polling_station_id');
+                if ($provinceCode !== '') {
+                    $builder->where('ps.code_province', $provinceCode);
+                }
+                if ($cantonCode !== '') {
+                    $builder->where('ps.code_canton', $cantonCode);
+                }
+            }
+
+            if ($isCantonal && $cantonId) {
+                $builder->where('candidates.canton_id', $cantonId);
+            }
+
+            $data = $builder
                 ->groupBy('election_results.candidate_id')
                 ->orderBy('total_votes', 'DESC')
                 ->findAll();
-            // Get aggregated blank/null/total_voters across all stations
+
+            // Get aggregated blank/null/total_voters across the selected scope.
             $db = \Config\Database::connect();
-            $agg = $db->query('SELECT SUM(t.blank) as total_blank, SUM(t.nullv) as total_null, SUM(t.voters) as total_voters FROM (SELECT MAX(blank_votes) as blank, MAX(null_votes) as nullv, MAX(total_voters) as voters FROM election_results WHERE election_id = ? AND dignity_id = ? GROUP BY polling_station_id) t', [$electionId, $dignityId])->getRow();
+            $aggSql = 'SELECT SUM(t.blank) as total_blank, SUM(t.nullv) as total_null, SUM(t.voters) as total_voters
+                       FROM (
+                           SELECT MAX(er.blank_votes) as blank, MAX(er.null_votes) as nullv, MAX(er.total_voters) as voters
+                           FROM election_results er';
+            $aggParams = [$electionId, $dignityId];
+
+            if ($provinceCode !== '' || $cantonCode !== '') {
+                $aggSql .= ' JOIN polling_stations ps ON ps.id = er.polling_station_id';
+            }
+            if ($isCantonal && $cantonId) {
+                $aggSql .= ' JOIN candidates c ON c.id = er.candidate_id';
+            }
+
+            $aggSql .= ' WHERE er.election_id = ? AND er.dignity_id = ?';
+
+            if ($isCantonal && $cantonId) {
+                $aggSql .= ' AND c.canton_id = ?';
+                $aggParams[] = $cantonId;
+            }
+            if ($provinceCode !== '') {
+                $aggSql .= ' AND ps.code_province = ?';
+                $aggParams[] = $provinceCode;
+            }
+            if ($cantonCode !== '') {
+                $aggSql .= ' AND ps.code_canton = ?';
+                $aggParams[] = $cantonCode;
+            }
+
+            $aggSql .= ' GROUP BY er.polling_station_id) t';
+            $agg = $db->query($aggSql, $aggParams)->getRow();
         }
         return $this->response->setJSON([
             'results' => $data,

@@ -15,7 +15,7 @@
         <label class="form-label small">Dignidad</label>
         <select id="fDignity" class="form-select form-select-sm">
           <option value="">Seleccione...</option>
-          <?php foreach ($dignities as $d): ?><option value="<?= $d->id ?>"><?= esc($d->name) ?></option><?php endforeach; ?>
+          <?php foreach ($dignities as $d): ?><option value="<?= $d->id ?>" data-slug="<?= esc($d->slug, 'attr') ?>"><?= esc($d->name) ?></option><?php endforeach; ?>
         </select>
       </div>
       <div class="col-md-2">
@@ -126,9 +126,32 @@ async function loadStations() {
 async function loadResults() {
   const eid = document.getElementById('fElection').value, did = document.getElementById('fDignity').value;
   if (!eid || !did) { alert('Seleccione elección y dignidad'); return; }
+
+  const dignitySelect = document.getElementById('fDignity');
+  const dignityOption = dignitySelect.options[dignitySelect.selectedIndex];
+  const dignitySlug = dignityOption ? (dignityOption.dataset.slug || '') : '';
   const psid = document.getElementById('fStation').value;
+  const province = document.getElementById('fProvince').value;
+  const canton = document.getElementById('fCanton').value;
+
+  if (dignitySlug === 'concejal-urbano' || dignitySlug === 'concejal-rural') {
+    alert('Los concejales se consultan en Resultados → Concejales / D’Hondt.');
+    return;
+  }
+  if (dignitySlug === 'alcalde' && (!province || !canton)) {
+    alert('Para consultar Alcalde debe seleccionar provincia y cantón.');
+    return;
+  }
+  if (dignitySlug === 'prefecto' && !province) {
+    alert('Para consultar Prefecto debe seleccionar la provincia.');
+    return;
+  }
   let url = '<?= base_url('ajax/results-by-dignity') ?>/'+eid+'/'+did;
-  if (psid) url += '?polling_station_id='+psid;
+  const params = new URLSearchParams();
+  if (psid) params.append('polling_station_id', psid);
+  if (province) params.append('province_code', province);
+  if (canton) params.append('canton_code', canton);
+  if (params.toString()) url += '?' + params.toString();
   const r = await fetch(url); const json = await r.json();
   const data = json.results || [];
   let html = '<div class="card mt-3"><div class="card-header d-flex justify-content-between align-items-center">';

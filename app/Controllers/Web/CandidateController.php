@@ -18,21 +18,40 @@ class CandidateController extends BaseWebController
         $elections = model('App\Models\ElectionModel')->getActive();
         $dignities = model('App\Models\DignityModel')->where('is_active', 1)->findAll();
         $parties = model('App\Models\PoliticalPartyModel')->where('is_active', 1)->findAll();
-        return $this->render('candidates/index', compact('candidates', 'elections', 'dignities', 'parties', 'filterElection', 'filterDignity'), 'Candidatos');
+        $provinces = model('App\Models\ProvinceModel')->where('is_active', 1)->orderBy('name', 'ASC')->findAll();
+        return $this->render('candidates/index', compact('candidates', 'elections', 'dignities', 'parties', 'provinces', 'filterElection', 'filterDignity'), 'Candidatos');
     }
 
     public function save()
     {
         $id = $this->request->getPost('id');
+        $dignityId = (int)$this->request->getPost('dignity_id');
+        $dignity = $dignityId ? model('App\Models\DignityModel')->find($dignityId) : null;
+        if (!$dignity) {
+            return redirect()->back()->withInput()->with('error', 'Seleccione una dignidad válida.');
+        }
+
+        $cantonId = null;
+        if ($dignity->slug === 'alcalde') {
+            $cantonId = (int)$this->request->getPost('canton_id');
+            if (!$cantonId || !model('App\Models\CantonModel')->find($cantonId)) {
+                return redirect()->back()->withInput()->with('error', 'Para Alcalde debe seleccionar la provincia y el cantón.');
+            }
+        } elseif ($id) {
+            $existing = model('App\Models\CandidateModel')->find($id);
+            $cantonId = $existing->canton_id ?? null;
+        }
+
         $model = model('App\Models\CandidateModel');
         $data = [
             'first_name' => $this->request->getPost('first_name'),
             'last_name' => $this->request->getPost('last_name'),
             'cedula' => $this->request->getPost('cedula') ?: null,
-            'dignity_id' => $this->request->getPost('dignity_id'),
+            'dignity_id' => $dignityId,
             'political_party_id' => $this->request->getPost('political_party_id'),
             'candidate_list_id' => $this->request->getPost('candidate_list_id') ?: null,
             'election_id' => $this->request->getPost('election_id'),
+            'canton_id' => $cantonId,
         ];
         if ($id) { $model->update($id, $data); $this->logAudit('update_candidate', 'candidates', $id); }
         else { $id = $model->insert($data); $this->logAudit('create_candidate', 'candidates', $id); }
@@ -84,6 +103,8 @@ class CandidateController extends BaseWebController
             $candModel = model('App\Models\CandidateModel');
             $dignityModel = model('App\Models\DignityModel');
             $partyModel = model('App\Models\PoliticalPartyModel');
+            $provinceModel = model('App\Models\ProvinceModel');
+            $cantonModel = model('App\Models\CantonModel');
 
             $dignities = $dignityModel->findAll();
             $imported = 0;
@@ -100,6 +121,8 @@ class CandidateController extends BaseWebController
                 $firstName = trim((string)($row[2] ?? ''));
                 $lastName = trim((string)($row[3] ?? ''));
                 $cedula = trim((string)($row[4] ?? ''));
+                $provinceRef = trim((string)($row[5] ?? ''));
+                $cantonRef = trim((string)($row[6] ?? ''));
 
                 if ($dignityRef === '' && $firstName === '' && $lastName === '') continue;
 
@@ -122,6 +145,41 @@ class CandidateController extends BaseWebController
                 if (!$dignity) {
                     $errors[] = "Fila $line: dignidad \"$dignityRef\" no encontrada";
                     continue;
+                }
+
+                $cantonId = null;
+                if ($dignity->slug === 'alcalde') {
+                    if ($provinceRef === '' || $cantonRef === '') {
+                        $errors[] = "Fila $line: para Alcalde debe indicar provincia y cantón";
+                        continue;
+                    }
+
+                    $province = $provinceModel
+                        ->groupStart()
+                            ->where('code', $provinceRef)
+                            ->orWhere('code', str_pad($provinceRef, 2, '0', STR_PAD_LEFT))
+                            ->orWhere('name', $provinceRef)
+                        ->groupEnd()
+                        ->first();
+                    if (!$province) {
+                        $errors[] = "Fila $line: provincia \"$provinceRef\" no encontrada";
+                        continue;
+                    }
+
+                    $canton = $cantonModel
+                        ->where('province_id', (int)$province->id)
+                        ->groupStart()
+                            ->where('code', $cantonRef)
+                            ->orWhere('code', str_pad($cantonRef, 4, '0', STR_PAD_LEFT))
+                            ->orWhere('name', $cantonRef)
+                        ->groupEnd()
+                        ->first();
+                    if (!$canton) {
+                        $errors[] = "Fila $line: cantón \"$cantonRef\" no encontrado en la provincia seleccionada";
+                        continue;
+                    }
+
+                    $cantonId = (int)$canton->id;
                 }
 
                 $party = $partyModel->where('acronym', $partyAcronym)->first();
@@ -160,6 +218,7 @@ class CandidateController extends BaseWebController
                     'political_party_id' => $party->id,
                     'candidate_list_id' => null,
                     'election_id' => $electionId,
+                    'canton_id' => $cantonId,
                     'is_active' => 1,
                 ]);
                 $imported++;
@@ -198,16 +257,16 @@ class CandidateController extends BaseWebController
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Candidatos');
         $sheet->fromArray([
-            ['Dignidad', 'Partido', 'Nombres', 'Apellidos', 'Cédula'],
-            ['Presidente', 'ADN', 'JUAN CARLOS', 'PEREZ GOMEZ', '0102030405'],
-            ['Asambleísta Nacional', 'RC', 'MARIA ELENA', 'LOPEZ RUIZ', '0102030406'],
-            ['Alcalde', 'MPD', 'PEDRO', 'MARTINEZ', ''],
+            ['Dignidad', 'Partido', 'Nombres', 'Apellidos', 'Cédula', 'Provincia', 'Cantón'],
+            ['Presidente', 'ADN', 'JUAN CARLOS', 'PEREZ GOMEZ', '0102030405', '', ''],
+            ['Asambleísta Nacional', 'RC', 'MARIA ELENA', 'LOPEZ RUIZ', '0102030406', '', ''],
+            ['Alcalde', 'MPD', 'PEDRO', 'MARTINEZ', '', '08', '560'],
         ]);
-        $sheet->getStyle('A1:E1')->getFont()->setBold(true);
-        $sheet->getStyle('A1:E1')->getFill()
+        $sheet->getStyle('A1:G1')->getFont()->setBold(true);
+        $sheet->getStyle('A1:G1')->getFill()
             ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
             ->getStartColor()->setARGB('FFE7F1FF');
-        foreach (['A' => 24, 'B' => 16, 'C' => 24, 'D' => 24, 'E' => 16] as $col => $width) {
+        foreach (['A' => 24, 'B' => 16, 'C' => 24, 'D' => 24, 'E' => 16, 'F' => 18, 'G' => 20] as $col => $width) {
             $sheet->getColumnDimension($col)->setWidth($width);
         }
         $sheet->freezePane('A2');
