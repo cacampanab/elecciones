@@ -55,6 +55,9 @@ class CandidateController extends BaseWebController
         ];
         if ($id) { $model->update($id, $data); $this->logAudit('update_candidate', 'candidates', $id); }
         else { $id = $model->insert($data); $this->logAudit('create_candidate', 'candidates', $id); }
+
+        $this->ensureElectionDignity((int)$data['election_id'], $dignityId);
+
         return redirect()->to(base_url('candidates'))->with('success', 'Candidato guardado');
     }
 
@@ -221,6 +224,7 @@ class CandidateController extends BaseWebController
                     'canton_id' => $cantonId,
                     'is_active' => 1,
                 ]);
+                $this->ensureElectionDignity($electionId, (int)$dignity->id);
                 $imported++;
             }
 
@@ -244,6 +248,29 @@ class CandidateController extends BaseWebController
         } catch (\Exception $e) {
             return redirect()->back()->with('error', 'Error inesperado: ' . $e->getMessage());
         }
+    }
+
+    private function ensureElectionDignity(int $electionId, int $dignityId): void
+    {
+        if (!$electionId || !$dignityId) {
+            return;
+        }
+
+        $exists = $this->db->table('election_dignities')
+            ->where('election_id', $electionId)
+            ->where('dignity_id', $dignityId)
+            ->countAllResults();
+        if ($exists) {
+            return;
+        }
+
+        $this->db->table('election_dignities')->insert([
+            'election_id' => $electionId,
+            'dignity_id' => $dignityId,
+            'is_active' => 1,
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
     }
 
     public function template()

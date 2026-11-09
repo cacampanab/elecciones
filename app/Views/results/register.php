@@ -579,7 +579,9 @@
       (Array.isArray(existing) ? existing : []).forEach(r => votesMap[r.candidate_id] = r);
 
       if (!candidates.length) {
-        list.innerHTML = '<div class="text-center py-2 text-muted">No hay candidatos para esta dignidad</div>';
+        list.innerHTML = currentDignitySlug === 'alcalde'
+          ? '<div class="text-center py-2 text-warning">No hay alcaldes con cantón asignado para este cantón. Revise Administración → Candidatos.</div>'
+          : '<div class="text-center py-2 text-muted">No hay candidatos para esta dignidad</div>';
       } else {
         list.innerHTML = candidates.map(c => {
           const saved = votesMap[c.id];
