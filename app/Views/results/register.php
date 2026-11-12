@@ -179,12 +179,16 @@
 <input type="file" name="acta_file_gallery" id="actaFileGallery" accept="image/*,application/pdf,.pdf" class="d-none" onchange="previewActa(event)">
 <small class="d-block text-muted mt-1" style="font-size:.7rem">JPG, PNG o PDF. Máximo 10 MB (límite del servidor puede ser menor).</small>
 
-<button type="button" class="btn btn-outline-primary mb-2" onclick="document.getElementById('actaFileCamera').click()">
+<button type="button" id="btnActaCamera" class="btn btn-outline-primary mb-2" onclick="document.getElementById('actaFileCamera').click()">
   <i class="bi bi-camera-fill me-1"></i> Tomar Foto
 </button>
-<button type="button" class="btn btn-outline-secondary mb-2" onclick="document.getElementById('actaFileGallery').click()">
+<button type="button" id="btnActaGallery" class="btn btn-outline-secondary mb-2" onclick="document.getElementById('actaFileGallery').click()">
   <i class="bi bi-folder me-1"></i> Galería / Archivo
 </button>
+                <div id="actaLoading" class="d-none py-3">
+                  <div class="spinner-border text-primary" role="status" aria-hidden="true"></div>
+                  <div class="small text-muted mt-2" id="actaLoadingText">Cargando foto...</div>
+                </div>
                 <div id="actaPreview" class="small text-muted">
                   <i class="bi bi-file-earmark-image fs-1 d-block mb-1"></i>
                   Haga clic para tomar foto o adjuntar archivo
@@ -202,7 +206,7 @@
             </div>
           </div>
 
-          <button type="submit" class="btn btn-primary mt-3 w-100 btn-lg">
+          <button type="submit" id="btnSaveResults" class="btn btn-primary mt-3 w-100 btn-lg">
             <i class="bi bi-save me-1"></i>Guardar Resultados
           </button>
         </form>
@@ -251,6 +255,9 @@
   let hasExistingResults = false;
   let currentDistributivo = 0;
   let isLocked = false;
+  let actaProcessing = false;
+  let submitting = false;
+  let actaSelectionToken = 0;
 
   const isOperatorUser = <?= is_operator() ? 'true' : 'false' ?>;
   const isSupervisorOrAdminUser = <?= is_supervisor_or_admin() ? 'true' : 'false' ?>;
@@ -375,32 +382,82 @@
       else if (input === galleryInput) cameraInput.value = '';
     }
 
-    const preview = document.getElementById('actaPreview'),
-      info = document.getElementById('actaInfo');
     if (!file) return;
 
-    if (file.type.startsWith('image/') && file.size > 900 * 1024) {
-      info.textContent = 'Optimizando imagen...';
-      const optimized = await compressActaImage(file);
-      if (optimized && input) {
-        try {
-          const dt = new DataTransfer();
-          dt.items.add(optimized);
-          input.files = dt.files;
-          file = optimized;
-        } catch (err) {
-          // Si el navegador no permite reasignar, se envía el archivo original.
+    const token = ++actaSelectionToken;
+    const startedAt = Date.now();
+    const isImage = file.type.startsWith('image/');
+    setActaProcessing(true, isImage ? 'Cargando foto...' : 'Cargando archivo...');
+
+    try {
+      if (isImage && file.size > 900 * 1024) {
+        setActaProcessing(true, 'Optimizando foto...');
+        const optimized = await compressActaImage(file);
+        if (token !== actaSelectionToken) return;
+        if (optimized && input) {
+          try {
+            const dt = new DataTransfer();
+            dt.items.add(optimized);
+            input.files = dt.files;
+            file = optimized;
+          } catch (err) {
+            // Si el navegador no permite reasignar, se envía el archivo original.
+          }
         }
       }
+
+      await renderActaFilePreview(file);
+      if (token !== actaSelectionToken) return;
+    } finally {
+      // Pausa mínima para que el indicador sea visible sin parpadear.
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < 600) await new Promise(resolve => setTimeout(resolve, 600 - elapsed));
+      if (token === actaSelectionToken) setActaProcessing(false);
     }
+  }
+
+  function setActaProcessing(processing, message) {
+    actaProcessing = processing;
+
+    const loading = document.getElementById('actaLoading');
+    const loadingText = document.getElementById('actaLoadingText');
+    const preview = document.getElementById('actaPreview');
+    const info = document.getElementById('actaInfo');
+    const btnCamera = document.getElementById('btnActaCamera');
+    const btnGallery = document.getElementById('btnActaGallery');
+    const submitBtn = document.getElementById('btnSaveResults');
+
+    if (loading) loading.classList.toggle('d-none', !processing);
+    if (loadingText && message) loadingText.textContent = message;
+    if (preview) preview.classList.toggle('d-none', processing);
+    if (info && processing) info.textContent = '';
+    if (btnCamera) btnCamera.disabled = processing;
+    if (btnGallery) btnGallery.disabled = processing;
+    if (submitBtn) {
+      submitBtn.disabled = processing || isLocked || submitting;
+      if (processing) {
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Espere, cargando acta...';
+      } else if (!submitting) {
+        submitBtn.innerHTML = '<i class="bi bi-save me-1"></i>Guardar Resultados';
+      }
+    }
+  }
+
+  async function renderActaFilePreview(file) {
+    const preview = document.getElementById('actaPreview');
+    const info = document.getElementById('actaInfo');
+    if (!preview || !info) return;
 
     info.textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
+
     if (file.type.startsWith('image/')) {
-      const r = new FileReader();
-      r.onload = e => {
-        preview.innerHTML = '<img src="' + e.target.result + '" class="img-fluid rounded" style="max-height:150px">';
-      };
-      r.readAsDataURL(file);
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      preview.innerHTML = '<img src="' + dataUrl + '" class="img-fluid rounded" style="max-height:150px">';
     } else {
       preview.innerHTML = '<i class="bi bi-filetype-pdf fs-1 d-block mb-1 text-danger"></i><span class="small">PDF: ' + file.name + '</span>';
     }
@@ -449,10 +506,12 @@
   }
 
   function clearActaInputs() {
+    actaSelectionToken++;
     const cameraInput = document.getElementById('actaFileCamera');
     const galleryInput = document.getElementById('actaFileGallery');
     if (cameraInput) cameraInput.value = '';
     if (galleryInput) galleryInput.value = '';
+    setActaProcessing(false);
   }
 
   // ---- Mobile modal: reuse the SAME form node (desktop flow untouched) ----
@@ -742,6 +801,15 @@
   document.getElementById('selDignity')?.addEventListener('change', onDignityChange);
 
   document.getElementById('resultFormInner')?.addEventListener('submit', function(e) {
+    if (submitting) {
+      e.preventDefault();
+      return;
+    }
+    if (actaProcessing) {
+      e.preventDefault();
+      alert('Espere: la foto del acta se está cargando.');
+      return;
+    }
     if (!currentDignityId) {
       e.preventDefault();
       alert('Seleccione la dignidad.');
@@ -762,6 +830,14 @@
       e.preventDefault();
       alert('El acta supera los 10 MB. Use una imagen más liviana o un PDF.');
       return;
+    }
+
+    // Evita envíos duplicados por clics repetidos.
+    submitting = true;
+    const submitBtn = document.getElementById('btnSaveResults');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Guardando...';
     }
   });
 
