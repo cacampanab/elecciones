@@ -174,9 +174,10 @@
               <label class="form-label fw-bold"><i class="bi bi-camera me-1"></i>Acta Electoral</label>
               <div class="border rounded p-3 text-center bg-light" id="uploadArea">
                 <!-- Input para cámara (con capture) -->
-<input type="file" name="acta_file" id="actaFileCamera" accept="image/*" capture="environment" class="d-none" onchange="previewActa(event)">
+<input type="file" name="acta_file_camera" id="actaFileCamera" accept="image/*" capture="environment" class="d-none" onchange="previewActa(event)">
 <!-- Input para galería/archivos (sin capture) -->
-<input type="file" name="acta_file" id="actaFileGallery" accept="image/*,application/pdf,.pdf" class="d-none" onchange="previewActa(event)">
+<input type="file" name="acta_file_gallery" id="actaFileGallery" accept="image/*,application/pdf,.pdf" class="d-none" onchange="previewActa(event)">
+<small class="d-block text-muted mt-1" style="font-size:.7rem">JPG, PNG o PDF. Máximo 10 MB (límite del servidor puede ser menor).</small>
 
 <button type="button" class="btn btn-outline-primary mb-2" onclick="document.getElementById('actaFileCamera').click()">
   <i class="bi bi-camera-fill me-1"></i> Tomar Foto
@@ -362,11 +363,37 @@
   }
 
   // Acta preview
-  function previewActa(event) {
-    const file = event.target.files[0],
-      preview = document.getElementById('actaPreview'),
+  async function previewActa(event) {
+    const input = event && event.target ? event.target : null;
+    let file = input && input.files ? input.files[0] : null;
+
+    // Solo se envía un archivo: al elegir uno se limpia el otro input.
+    const cameraInput = document.getElementById('actaFileCamera');
+    const galleryInput = document.getElementById('actaFileGallery');
+    if (cameraInput && galleryInput) {
+      if (input === cameraInput) galleryInput.value = '';
+      else if (input === galleryInput) cameraInput.value = '';
+    }
+
+    const preview = document.getElementById('actaPreview'),
       info = document.getElementById('actaInfo');
     if (!file) return;
+
+    if (file.type.startsWith('image/') && file.size > 900 * 1024) {
+      info.textContent = 'Optimizando imagen...';
+      const optimized = await compressActaImage(file);
+      if (optimized && input) {
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(optimized);
+          input.files = dt.files;
+          file = optimized;
+        } catch (err) {
+          // Si el navegador no permite reasignar, se envía el archivo original.
+        }
+      }
+    }
+
     info.textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
     if (file.type.startsWith('image/')) {
       const r = new FileReader();
@@ -377,6 +404,55 @@
     } else {
       preview.innerHTML = '<i class="bi bi-filetype-pdf fs-1 d-block mb-1 text-danger"></i><span class="small">PDF: ' + file.name + '</span>';
     }
+  }
+
+  async function compressActaImage(file) {
+    if (typeof createImageBitmap !== 'function' || typeof DataTransfer !== 'function') return file;
+    try {
+      const bitmap = await createImageBitmap(file);
+      const baseName = file.name.replace(/\.[^.]+$/, '') || 'acta';
+      const attempts = [
+        [2000, 0.82],
+        [1600, 0.72],
+        [1300, 0.62]
+      ];
+      let best = file;
+
+      for (const [maxSide, quality] of attempts) {
+        const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) break;
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+        if (blob && blob.size < best.size) {
+          best = new File([blob], baseName + '.jpg', { type: 'image/jpeg' });
+        }
+        if (best.size <= 900 * 1024) break;
+      }
+
+      if (bitmap.close) bitmap.close();
+      return best;
+    } catch (err) {
+      return file;
+    }
+  }
+
+  function selectedActaFile() {
+    const cameraInput = document.getElementById('actaFileCamera');
+    const galleryInput = document.getElementById('actaFileGallery');
+    if (cameraInput && cameraInput.files && cameraInput.files.length) return cameraInput.files[0];
+    if (galleryInput && galleryInput.files && galleryInput.files.length) return galleryInput.files[0];
+    return null;
+  }
+
+  function clearActaInputs() {
+    const cameraInput = document.getElementById('actaFileCamera');
+    const galleryInput = document.getElementById('actaFileGallery');
+    if (cameraInput) cameraInput.value = '';
+    if (galleryInput) galleryInput.value = '';
   }
 
   // ---- Mobile modal: reuse the SAME form node (desktop flow untouched) ----
@@ -427,6 +503,7 @@
     document.getElementById('noSelection').style.display = 'none';
     setFormLocked(false);
     renderActaPreview(null);
+    clearActaInputs();
     getLocation();
     await loadDignities(eid);
     if (isMobileView()) openMobileModal();
@@ -513,6 +590,8 @@
     document.getElementById('f_notes').value = '';
     document.getElementById('f_reason').required = false;
     setFormLocked(false);
+    clearActaInputs();
+    renderActaPreview(null);
 
     const container = document.getElementById('candidatesContainer');
     const list = document.getElementById('candidatesList');
@@ -671,6 +750,18 @@
     if (isLocked) {
       e.preventDefault();
       alert('El acta está bloqueada para edición.');
+      return;
+    }
+    const acta = selectedActaFile();
+    if (!currentMinute && !acta) {
+      e.preventDefault();
+      alert('Debe adjuntar el acta de esta dignidad (foto o archivo).');
+      return;
+    }
+    if (acta && acta.size > 10 * 1024 * 1024) {
+      e.preventDefault();
+      alert('El acta supera los 10 MB. Use una imagen más liviana o un PDF.');
+      return;
     }
   });
 
@@ -685,12 +776,15 @@
     e.preventDefault();
     e.target.classList.remove('border-primary');
     if (e.dataTransfer.files.length) {
-      document.getElementById('actaFile').files = e.dataTransfer.files;
-      previewActa({
-        target: {
-          files: e.dataTransfer.files
-        }
-      });
+      const galleryInput = document.getElementById('actaFileGallery');
+      const cameraInput = document.getElementById('actaFileCamera');
+      if (cameraInput) cameraInput.value = '';
+      if (galleryInput) {
+        galleryInput.files = e.dataTransfer.files;
+        previewActa({ target: galleryInput });
+      } else {
+        previewActa({ target: { files: e.dataTransfer.files } });
+      }
     }
   });
   getLocation();

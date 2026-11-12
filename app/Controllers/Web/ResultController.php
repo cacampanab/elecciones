@@ -125,12 +125,11 @@ class ResultController extends BaseWebController
             return redirect()->back()->with('error', 'Indique el motivo de la corrección.');
         }
 
-        $actaFile = $this->request->getFile('acta_file');
-        $hasFile = $actaFile && $actaFile->isValid() && $actaFile->getSize() > 0
-            && $actaFile->getTempName() && file_exists($actaFile->getTempName());
+        $actaFile = $this->uploadedActaFile();
+        $hasFile = $actaFile !== null;
 
         if (!$currentMinute && !$hasFile) {
-            return redirect()->back()->with('error', 'Debe adjuntar el acta de esta dignidad.');
+            return redirect()->back()->with('error', 'Debe adjuntar el acta de esta dignidad.' . $this->actaUploadErrorDetail());
         }
 
         $ext = null;
@@ -395,12 +394,11 @@ class ResultController extends BaseWebController
             return redirect()->back()->with('error', 'Indique el motivo de la corrección.');
         }
 
-        $actaFile = $this->request->getFile('acta_file');
-        $hasFile = $actaFile && $actaFile->isValid() && $actaFile->getSize() > 0
-            && $actaFile->getTempName() && file_exists($actaFile->getTempName());
+        $actaFile = $this->uploadedActaFile();
+        $hasFile = $actaFile !== null;
 
         if (!$currentMinute && !$hasFile) {
-            return redirect()->back()->with('error', 'Debe adjuntar el acta de esta dignidad.');
+            return redirect()->back()->with('error', 'Debe adjuntar el acta de esta dignidad.' . $this->actaUploadErrorDetail());
         }
 
         $ext = null;
@@ -553,5 +551,59 @@ class ResultController extends BaseWebController
 
         return redirect()->to(base_url('results/register'))
             ->with($consistency['status'] === 'error' ? 'warning' : 'success', $msg);
+    }
+
+    /**
+     * Devuelve el archivo de acta válido.
+     *
+     * La vista usa dos inputs separados (cámara y galería) con nombres
+     * distintos. Antes ambos se llamaban igual y PHP conservaba solo el
+     * último, por lo que un input vacío anulaba la foto tomada con la cámara.
+     */
+    private function uploadedActaFile()
+    {
+        foreach (['acta_file', 'acta_file_camera', 'acta_file_gallery'] as $field) {
+            $file = $this->request->getFile($field);
+            if ($file && $file->isValid() && (int)$file->getSize() > 0) {
+                return $file;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Traduce el código de error de subida de PHP para poder diagnosticar
+     * problemas de configuración del servidor (tamaño, permisos, tmp, etc.).
+     */
+    private function actaUploadErrorDetail(): string
+    {
+        foreach (['acta_file', 'acta_file_camera', 'acta_file_gallery'] as $field) {
+            $file = $this->request->getFile($field);
+            if (!$file) {
+                continue;
+            }
+
+            $error = (int)$file->getError();
+            if ($error === UPLOAD_ERR_OK) {
+                continue;
+            }
+
+            switch ($error) {
+                case UPLOAD_ERR_INI_SIZE:
+                case UPLOAD_ERR_FORM_SIZE:
+                    return ' El archivo supera el tamaño máximo permitido por el servidor (' . ini_get('upload_max_filesize') . ').';
+                case UPLOAD_ERR_PARTIAL:
+                    return ' La subida del archivo se interrumpió. Intente nuevamente.';
+                case UPLOAD_ERR_NO_TMP_DIR:
+                    return ' El servidor no tiene una carpeta temporal de subida configurada.';
+                case UPLOAD_ERR_CANT_WRITE:
+                    return ' El servidor no pudo guardar el archivo temporal (permisos de escritura).';
+                case UPLOAD_ERR_EXTENSION:
+                    return ' Una extensión de PHP bloqueó la subida del archivo.';
+            }
+        }
+
+        return ' No se recibió ningún archivo. Vuelva a seleccionar la foto o el archivo.';
     }
 }
