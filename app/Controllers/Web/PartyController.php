@@ -109,17 +109,51 @@ class PartyController extends BaseWebController
             throw new \RuntimeException('El logo no debe superar 2 MB.');
         }
 
-        $folder = FCPATH . 'uploads/parties';
-        if (!is_dir($folder) && !mkdir($folder, 0777, true) && !is_dir($folder)) {
-            throw new \RuntimeException('No se pudo crear la carpeta de logos.');
-        }
-
+        $folder = $this->resolveLogoFolder();
         $newName = $file->getRandomName();
-        if (!$file->move($folder, $newName)) {
-            throw new \RuntimeException('No se pudo guardar el logo.');
+
+        try {
+            if (!$file->move($folder, $newName)) {
+                throw new \RuntimeException('No se pudo guardar el logo.');
+            }
+        } catch (\Throwable $e) {
+            log_message('error', 'Error al mover logo de partido: ' . $e->getMessage());
+            throw new \RuntimeException('No se pudo guardar el logo. Verifique permisos de escritura en ' . $folder . '.');
         }
 
-        return 'uploads/parties/' . $newName;
+        $relative = str_replace('\\', '/', str_replace(FCPATH, '', $folder));
+        $relative = trim($relative, '/');
+
+        return $relative . '/' . $newName;
+    }
+
+    /**
+     * Usa public/uploads/parties; si el servidor no permite escribir ahí,
+     * cae a public/uploads/minutes/parties, que ya se usa para las actas.
+     */
+    private function resolveLogoFolder(): string
+    {
+        $folders = [
+            FCPATH . 'uploads/parties',
+            FCPATH . 'uploads/minutes/parties',
+        ];
+
+        foreach ($folders as $folder) {
+            if (!is_dir($folder)) {
+                @mkdir($folder, 0775, true);
+            }
+            if (!is_dir($folder)) {
+                continue;
+            }
+            if (!is_writable($folder)) {
+                @chmod($folder, 0775);
+            }
+            if (is_writable($folder)) {
+                return $folder;
+            }
+        }
+
+        throw new \RuntimeException('La carpeta de logos no tiene permisos de escritura. Cree public/uploads/parties y asígnele permisos al usuario del servidor web.');
     }
 
     private function deleteLogoFile(?string $logo): void
