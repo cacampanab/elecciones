@@ -531,7 +531,7 @@ class ConcejalController extends BaseWebController
     private function listsForContext(int $electionId, int $cantonId, int $dignityId, ?int $circumscriptionId, array $votesMap): array
     {
         $builder = $this->db->table('candidate_lists cl')
-            ->select('cl.*, p.name AS party_name, p.acronym AS party_acronym, p.list_number, p.color')
+            ->select('cl.*, p.name AS party_name, p.acronym AS party_acronym, p.list_number, p.color, p.logo AS party_logo')
             ->join('political_parties p', 'p.id = cl.political_party_id')
             ->where('cl.election_id', $electionId)
             ->where('cl.canton_id', $cantonId)

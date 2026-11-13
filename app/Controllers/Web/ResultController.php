@@ -42,10 +42,20 @@ class ResultController extends BaseWebController
         $psId = (int)$this->request->getPost('polling_station_id');
         $electionId = (int)$this->request->getPost('election_id');
         $dignityId = (int)$this->request->getPost('dignity_id');
-        $totalVoters = (int)$this->request->getPost('total_voters');
-        $blankVotes = (int)($this->request->getPost('blank_votes') ?? 0);
-        $nullVotes = (int)($this->request->getPost('null_votes') ?? 0);
-        $registeredVoters = (int)$this->request->getPost('registered_voters');
+        $totalVoters = $this->normalizeInteger($this->request->getPost('total_voters'));
+        $blankVotes = $this->normalizeInteger($this->request->getPost('blank_votes'));
+        $nullVotes = $this->normalizeInteger($this->request->getPost('null_votes'));
+        $registeredVoters = $this->normalizeInteger($this->request->getPost('registered_voters'));
+        foreach ([
+            'total de sufragantes' => $totalVoters,
+            'votos blancos' => $blankVotes,
+            'votos nulos' => $nullVotes,
+            'electores en el acta' => $registeredVoters,
+        ] as $fieldLabel => $fieldValue) {
+            if ($fieldValue === null) {
+                return redirect()->back()->with('error', 'El campo ' . $fieldLabel . ' debe ser un número entero.');
+            }
+        }
         $votes = $this->request->getPost('votes') ?: [];
         $listVotes = $this->request->getPost('list_votes') ?: [];
         $latitude = $this->request->getPost('latitude') ?: null;
@@ -97,7 +107,11 @@ class ResultController extends BaseWebController
             if ((int)$candidate->dignity_id !== $dignityId || (int)$candidate->election_id !== $electionId) {
                 continue;
             }
-            $validVotes[(int)$candidateId] = max(0, (int)$voteCount);
+            $voteValue = $this->normalizeInteger($voteCount);
+            if ($voteValue === null) {
+                return redirect()->back()->with('error', 'Los votos de los candidatos deben ser números enteros.');
+            }
+            $validVotes[(int)$candidateId] = $voteValue;
         }
         if (!$validVotes) {
             return redirect()->back()->with('error', 'No hay candidatos válidos para la dignidad seleccionada.');
@@ -365,8 +379,8 @@ class ResultController extends BaseWebController
             if (!in_array($listId, $validListIds, true)) {
                 continue;
             }
-            $votes = filter_var($value === '' ? 0 : $value, FILTER_VALIDATE_INT);
-            if ($votes === false || $votes < 0) {
+            $votes = $this->normalizeInteger($value);
+            if ($votes === null) {
                 return redirect()->back()->with('error', 'Los votos por lista deben ser números enteros mayores o iguales a cero.');
             }
             $validVotes[$listId] = $votes;
@@ -636,5 +650,24 @@ class ResultController extends BaseWebController
         }
 
         return ' No se recibió ningún archivo. Vuelva a seleccionar la foto o el archivo.';
+    }
+
+    /**
+     * Convierte valores como "050" en 50. Devuelve null si no es un
+     * número entero válido (sin signos, decimales ni letras).
+     */
+    private function normalizeInteger($value): ?int
+    {
+        $raw = trim((string)$value);
+        if ($raw === '') {
+            return 0;
+        }
+        if (!preg_match('/^\d+$/', $raw)) {
+            return null;
+        }
+
+        $raw = ltrim($raw, '0');
+
+        return $raw === '' ? 0 : (int)$raw;
     }
 }

@@ -31,7 +31,7 @@ class TerritorialAjaxController extends BaseWebController
     public function candidatesByDignity($electionId, $dignityId)
     {
         $builder = model('App\Models\CandidateModel')
-            ->select('candidates.*, political_parties.name as party_name, political_parties.acronym as party_acronym, political_parties.list_number, political_parties.color as party_color')
+            ->select('candidates.*, political_parties.name as party_name, political_parties.acronym as party_acronym, political_parties.list_number, political_parties.color as party_color, political_parties.logo as party_logo')
             ->join('political_parties', 'political_parties.id = candidates.political_party_id')
             ->where('candidates.election_id', $electionId)
             ->where('candidates.dignity_id', $dignityId);
@@ -107,7 +107,7 @@ class TerritorialAjaxController extends BaseWebController
         }
 
         $builder = $this->db->table('candidate_lists cl')
-            ->select('cl.*, p.name AS party_name, p.acronym AS party_acronym, p.list_number, p.color AS party_color')
+            ->select('cl.*, p.name AS party_name, p.acronym AS party_acronym, p.list_number, p.color AS party_color, p.logo AS party_logo')
             ->join('political_parties p', 'p.id = cl.political_party_id')
             ->where('cl.election_id', (int)$station->election_id)
             ->where('cl.canton_id', (int)$location->canton_id)

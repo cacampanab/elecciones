@@ -119,28 +119,28 @@
             </div>
             <div class="col-md-3">
               <label class="form-label small">Electores en el Acta *</label>
-              <input type="number" inputmode="numeric" name="registered_voters" id="f_registered" class="form-control form-control-sm" required min="0" step="1"
+              <input type="text" inputmode="numeric" pattern="[0-9]*" name="registered_voters" id="f_registered" class="form-control form-control-sm" required
                 onkeypress="return event.charCode >= 48 && event.charCode <= 57"
-                oninput="if(this.value) this.value = this.value.replace(/[^0-9]/g,'')">
+                oninput="normalizeNumericField(this)">
               <small id="electoresDistributivo" class="text-muted" style="font-size:.7rem"></small>
             </div>
             <div class="col-md-3">
               <label class="form-label small">Total Sufragantes *</label>
-              <input type="number" inputmode="numeric" name="total_voters" id="f_total_voters" class="form-control form-control-sm" required step="1"
+              <input type="text" inputmode="numeric" pattern="[0-9]*" name="total_voters" id="f_total_voters" class="form-control form-control-sm" required
                 onkeypress="return event.charCode >= 48 && event.charCode <= 57"
-                oninput="if(this.value) this.value = this.value.replace(/[^0-9]/g,'')">
+                oninput="normalizeNumericField(this)">
             </div>
             <div class="col-md-3">
               <label class="form-label small">V. Blancos</label>
-              <input type="number" inputmode="numeric" name="blank_votes" id="f_blank" class="form-control form-control-sm" value="0" min="0" step="1"
+              <input type="text" inputmode="numeric" pattern="[0-9]*" name="blank_votes" id="f_blank" class="form-control form-control-sm" value="0"
                 onkeypress="return event.charCode >= 48 && event.charCode <= 57"
-                oninput="if(this.value) this.value = this.value.replace(/[^0-9]/g,'')">
+                oninput="normalizeNumericField(this)">
             </div>
             <div class="col-md-3">
               <label class="form-label small">V. Nulos</label>
-              <input type="number" inputmode="numeric" name="null_votes" id="f_null" class="form-control form-control-sm" value="0" min="0" step="1"
+              <input type="text" inputmode="numeric" pattern="[0-9]*" name="null_votes" id="f_null" class="form-control form-control-sm" value="0"
                 onkeypress="return event.charCode >= 48 && event.charCode <= 57"
-                oninput="if(this.value) this.value = this.value.replace(/[^0-9]/g,'')">
+                oninput="normalizeNumericField(this)">
             </div>
           </div>
 
@@ -218,7 +218,7 @@
 
 <style>
   @media (max-width: 767.98px) {
-    #resultFormInner input[type="number"] {
+    #resultFormInner input[inputmode="numeric"] {
       font-size: 16px;
       min-height: 44px;
     }
@@ -273,6 +273,15 @@
       '"': '&quot;',
       "'": '&#39;'
     } [ch]));
+  }
+
+  function normalizeNumericField(el) {
+    const digits = String(el.value ?? '').replace(/[^0-9]/g, '');
+    el.value = digits.replace(/^0+(?=\d)/, '');
+  }
+
+  function normalizeNumericFields() {
+    document.querySelectorAll('#resultFormInner input[inputmode="numeric"]').forEach(normalizeNumericField);
   }
 
   function statusLabel(status) {
@@ -734,11 +743,14 @@
           list.innerHTML = lists.map(item => {
             const candidates = Array.isArray(item.candidates) ? item.candidates : [];
             const names = candidates.map(c => escapeHtml(c.first_name + ' ' + c.last_name)).join(', ');
+            const logo = item.party_logo
+              ? '<img src="' + escapeHtml(baseUrl + item.party_logo) + '" alt="" class="me-1 rounded" style="height:26px;width:26px;object-fit:contain">'
+              : '';
             return '<div class="row g-1 align-items-center mb-1 py-1 border-bottom">' +
               '<div class="col-1 text-center"><span class="badge" style="background:' + (item.party_color || '#6c757d') + '">' + escapeHtml(item.list_number || '?') + '</span></div>' +
-              '<div class="col-6"><span class="small"><strong>' + escapeHtml(item.party_acronym || '') + '</strong> ' + escapeHtml(item.party_name || '') + '</span>' +
+              '<div class="col-6">' + logo + '<span class="small"><strong>' + escapeHtml(item.party_acronym || '') + '</strong> ' + escapeHtml(item.party_name || '') + '</span>' +
               (names ? '<div class="small text-muted text-truncate">' + names + '</div>' : '') + '</div>' +
-              '<div class="col-3"><input type="number" inputmode="numeric" name="list_votes[' + item.id + ']" class="form-control form-control-sm vote-input" placeholder="0" value="' + (item.votes || 0) + '" min="0" step="1" onkeypress="return event.charCode>=48&&event.charCode<=57" oninput="if(this.value)this.value=this.value.replace(/[^0-9]/g,\'\')"></div>' +
+              '<div class="col-3"><input type="text" inputmode="numeric" pattern="[0-9]*" name="list_votes[' + item.id + ']" class="form-control form-control-sm vote-input" placeholder="0" value="' + (item.votes || 0) + '" onkeypress="return event.charCode>=48&&event.charCode<=57" oninput="normalizeNumericField(this)"></div>' +
               '<div class="col-2"></div>' +
               '</div>';
           }).join('');
@@ -769,11 +781,14 @@
         list.innerHTML = candidates.map(c => {
           const saved = votesMap[c.id];
           const val = saved ? saved.votes : 0;
+          const logo = c.party_logo
+            ? '<img src="' + escapeHtml(baseUrl + c.party_logo) + '" alt="" class="me-1 rounded" style="height:26px;width:26px;object-fit:contain">'
+            : '';
           return '<div class="row g-1 align-items-center mb-1 py-1 border-bottom">' +
             '<div class="col-1 text-center"><span class="badge" style="background:' + (c.party_color || '#6c757d') + '">' + escapeHtml(c.list_number || '?') + '</span></div>' +
-            '<div class="col-6"><span class="small">' + escapeHtml(c.first_name) + ' ' + escapeHtml(c.last_name) + '</span> <small class="text-muted">(' + escapeHtml(c.party_acronym) + ')</small>' +
+            '<div class="col-6">' + logo + '<span class="small">' + escapeHtml(c.first_name) + ' ' + escapeHtml(c.last_name) + '</span> <small class="text-muted">(' + escapeHtml(c.party_acronym) + ')</small>' +
             (saved ? ' <span class="badge bg-success ms-1" style="font-size:.6rem">guardado</span>' : '') + '</div>' +
-            '<div class="col-3"><input type="number" inputmode="numeric" name="votes[' + c.id + ']" class="form-control form-control-sm vote-input" placeholder="0" value="' + val + '" min="0" step="1" onkeypress="return event.charCode>=48&&event.charCode<=57" oninput="if(this.value)this.value=this.value.replace(/[^0-9]/g,\'\')"></div>' +
+            '<div class="col-3"><input type="text" inputmode="numeric" pattern="[0-9]*" name="votes[' + c.id + ']" class="form-control form-control-sm vote-input" placeholder="0" value="' + val + '" onkeypress="return event.charCode>=48&&event.charCode<=57" oninput="normalizeNumericField(this)"></div>' +
             '<div class="col-2"><input type="hidden" name="dignity_ids[' + c.id + ']" value="' + c.dignity_id + '"></div>' +
             '</div>';
         }).join('');
@@ -846,6 +861,8 @@
   document.getElementById('selDignity')?.addEventListener('change', onDignityChange);
 
   document.getElementById('resultFormInner')?.addEventListener('submit', function(e) {
+    normalizeNumericFields();
+
     if (submitting) {
       e.preventDefault();
       return;

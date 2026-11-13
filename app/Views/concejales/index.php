@@ -119,6 +119,9 @@
         <div class="border rounded mb-3">
           <div class="bg-light px-3 py-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
             <div>
+              <?php if (!empty($list->party_logo)): ?>
+                <img src="<?= base_url($list->party_logo) ?>" alt="" style="height:28px;width:28px;object-fit:contain" class="me-2 rounded border bg-white p-1">
+              <?php endif; ?>
               <strong>Lista <?= (int)$list->list_number ?> - <?= esc($list->party_acronym) ?></strong>
               <span class="text-muted small ms-2"><?= esc($list->party_name) ?></span>
             </div>
