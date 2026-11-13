@@ -3,7 +3,12 @@
 <div class="content-header d-flex flex-wrap justify-content-between align-items-center gap-2">
   <div>
     <h1 class="mb-1">Concejales</h1>
-    <p class="text-muted mb-0 small">Listas, integrantes, votos por lista y distribución de escaños por el método D’Hondt.</p>
+    <p class="text-muted mb-0 small">
+      <?php if (!empty($circumscription)): ?>
+        Circunscripción: <strong><?= esc($circumscription->name) ?></strong> ·
+      <?php endif; ?>
+      Listas, integrantes, votos por lista y distribución de escaños por el método D’Hondt.
+    </p>
   </div>
   <form method="get" action="<?= base_url('concejales') ?>" class="d-flex flex-wrap gap-2 align-items-end">
     <div>
@@ -22,18 +27,33 @@
         <?php endforeach; ?>
       </select>
     </div>
-    <div>
-      <label class="form-label small mb-1">Dignidad</label>
-      <select name="dignity_id" class="form-select form-select-sm" style="min-width:200px" onchange="this.form.submit()" <?= empty($dignities) ? 'disabled' : '' ?>>
-        <?php foreach ($dignities as $item): ?>
-          <option value="<?= (int)$item->id ?>" <?= (int)$item->id === (int)$dignityId ? 'selected' : '' ?>><?= esc($item->name) ?></option>
-        <?php endforeach; ?>
-      </select>
-    </div>
+    <?php if (!empty($usesCircumscriptions)): ?>
+      <div>
+        <label class="form-label small mb-1">Circunscripción</label>
+        <select name="circumscription_id" class="form-select form-select-sm" style="min-width:250px" onchange="this.form.submit()">
+          <?php foreach ($circumscriptions as $item): ?>
+            <option value="<?= (int)$item->id ?>" <?= (int)$item->id === (int)$circumscriptionId ? 'selected' : '' ?>><?= esc($item->name) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div>
+        <label class="form-label small mb-1">Dignidad</label>
+        <input type="text" class="form-control form-control-sm" style="min-width:190px" value="<?= esc($dignity->name ?? '') ?>" disabled>
+      </div>
+    <?php else: ?>
+      <div>
+        <label class="form-label small mb-1">Dignidad</label>
+        <select name="dignity_id" class="form-select form-select-sm" style="min-width:200px" onchange="this.form.submit()" <?= empty($dignities) ? 'disabled' : '' ?>>
+          <?php foreach ($dignities as $item): ?>
+            <option value="<?= (int)$item->id ?>" <?= (int)$item->id === (int)$dignityId ? 'selected' : '' ?>><?= esc($item->name) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+    <?php endif; ?>
   </form>
 </div>
 
-<?php if (!empty($seats) && $seats <= 0): ?>
+<?php if ((int)$seats <= 0): ?>
   <div class="alert alert-warning d-flex justify-content-between align-items-center">
     <span><strong>No hay escaños configurados</strong> para este cantón y dignidad.</span>
     <a class="btn btn-sm btn-warning" href="<?= base_url('election-seats?election_id=' . (int)$electionId) ?>">Configurar escaños</a>
@@ -51,6 +71,7 @@
       <input type="hidden" name="election_id" value="<?= (int)$electionId ?>">
       <input type="hidden" name="canton_id" value="<?= (int)$cantonId ?>">
       <input type="hidden" name="dignity_id" value="<?= (int)$dignityId ?>">
+      <input type="hidden" name="circumscription_id" value="<?= (int)($circumscriptionId ?? 0) ?>">
 
       <div class="col-md-3">
         <label class="form-label small">Partido / lista *</label>
@@ -111,6 +132,7 @@
             <input type="hidden" name="election_id" value="<?= (int)$electionId ?>">
             <input type="hidden" name="canton_id" value="<?= (int)$cantonId ?>">
             <input type="hidden" name="dignity_id" value="<?= (int)$dignityId ?>">
+            <input type="hidden" name="circumscription_id" value="<?= (int)($circumscriptionId ?? 0) ?>">
             <div class="table-responsive">
               <table class="table table-sm align-middle mb-2">
                 <thead class="table-light">
@@ -134,7 +156,7 @@
                       <td><input type="text" name="candidates[<?= (int)$candidate->id ?>][cedula]" value="<?= esc($candidate->cedula, 'attr') ?>" class="form-control form-control-sm" maxlength="13"></td>
                       <td class="text-end">
                         <a class="btn btn-sm btn-outline-danger"
-                           href="<?= base_url('concejales/candidates/delete/' . (int)$candidate->id . '?election_id=' . (int)$electionId . '&canton_id=' . (int)$cantonId . '&dignity_id=' . (int)$dignityId) ?>"
+                           href="<?= base_url('concejales/candidates/delete/' . (int)$candidate->id . '?election_id=' . (int)$electionId . '&canton_id=' . (int)$cantonId . '&dignity_id=' . (int)$dignityId . '&circumscription_id=' . (int)($circumscriptionId ?? 0)) ?>"
                            onclick="return confirm('¿Eliminar este integrante de la lista?')">
                           <i class="bi bi-trash"></i>
                         </a>
@@ -187,7 +209,7 @@
         </table>
       </div>
       <div class="text-end mt-3">
-        <a class="btn btn-primary" href="<?= base_url('concejales?election_id=' . (int)$electionId . '&canton_id=' . (int)$cantonId . '&dignity_id=' . (int)$dignityId . '&calcular=1') ?>">
+        <a class="btn btn-primary" href="<?= base_url('concejales?election_id=' . (int)$electionId . '&canton_id=' . (int)$cantonId . '&dignity_id=' . (int)$dignityId . '&circumscription_id=' . (int)($circumscriptionId ?? 0) . '&calcular=1') ?>">
           <i class="bi bi-arrow-clockwise me-1"></i>Recalcular escaños
         </a>
       </div>
@@ -198,7 +220,7 @@
 <?php if ($calculation): ?>
   <div class="card mb-3">
     <div class="card-header d-flex justify-content-between align-items-center">
-      <span><i class="bi bi-trophy-fill me-2"></i>Distribución de escaños - <?= esc($dignity->name) ?></span>
+      <span><i class="bi bi-trophy-fill me-2"></i>Distribución de escaños - <?= esc($dignity->name) ?><?= !empty($circumscription) ? ' / ' . esc($circumscription->name) : '' ?></span>
       <span class="badge bg-primary"><?= (int)$calculation['seats'] ?> escaños</span>
     </div>
     <div class="card-body">
@@ -275,8 +297,8 @@
   <div class="card-header"><i class="bi bi-info-circle me-2"></i>Manual rápido</div>
   <div class="card-body small">
     <ol class="mb-0 ps-3">
-      <li>Configure los escaños en <strong>Administración → Escaños</strong>.</li>
-      <li>Seleccione elección, cantón y dignidad.</li>
+      <li>Configure los escaños en <strong>Administración → Escaños</strong> y, si el cantón usa circunscripciones, en <strong>Administración → Circunscripciones</strong>.</li>
+      <li>Seleccione elección, cantón, circunscripción (si aplica) y dignidad.</li>
       <li>Agregue los integrantes de cada lista en el orden de la papeleta.</li>
       <li>Registre las actas por JRV en <strong>Resultados → Registrar Resultados</strong>.</li>
       <li>Presione <strong>Recalcular escaños</strong>.</li>

@@ -330,6 +330,9 @@
           <a href="<?= base_url('election-seats') ?>" class="nav-link <?= strpos(current_url(), '/election-seats') !== false ? 'active' : '' ?>">
             <i class="bi bi-grid-3x3-gap-fill"></i> Escaños
           </a>
+          <a href="<?= base_url('circumscriptions') ?>" class="nav-link <?= strpos(current_url(), '/circumscriptions') !== false ? 'active' : '' ?>">
+            <i class="bi bi-diagram-2-fill"></i> Circunscripciones
+          </a>
           <a href="<?= base_url('dignities') ?>" class="nav-link <?= strpos(current_url(), '/dignities') !== false ? 'active' : '' ?>">
             <i class="bi bi-award-fill"></i> Dignidades
           </a>

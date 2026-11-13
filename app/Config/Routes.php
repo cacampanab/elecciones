@@ -37,6 +37,11 @@ $routes->get('elections/delete/(:num)', 'Web\ElectionController::delete/$1');
 $routes->get('election-seats', 'Web\ElectionSeatController::index');
 $routes->post('election-seats/save', 'Web\ElectionSeatController::save');
 
+// Circumscriptions (concejales por circunscripción)
+$routes->get('circumscriptions', 'Web\CircumscriptionController::index');
+$routes->post('circumscriptions/save', 'Web\CircumscriptionController::save');
+$routes->get('circumscriptions/delete/(:num)', 'Web\CircumscriptionController::delete/$1');
+
 // Dignities
 $routes->get('dignities', 'Web\DignityController::index');
 $routes->post('dignities/save', 'Web\DignityController::save');
@@ -83,6 +88,7 @@ $routes->get('ajax/station-current-acta/(:num)', 'Web\TerritorialAjaxController:
 $routes->get('ajax/audit-logs', 'Web\TerritorialAjaxController::auditLogs');
 $routes->get('ajax/candidates-by-dignity/(:num)/(:num)', 'Web\TerritorialAjaxController::candidatesByDignity/$1/$2');
 $routes->get('ajax/concejal-lists-by-station/(:num)/(:num)', 'Web\TerritorialAjaxController::concejalListsByStation/$1/$2');
+$routes->get('ajax/station-circumscription/(:num)', 'Web\TerritorialAjaxController::stationCircumscription/$1');
 $routes->get('ajax/election-dignities/(:num)', 'Web\TerritorialAjaxController::electionDignities/$1');
 $routes->get('ajax/results-by-dignity/(:num)/(:num)', 'Web\TerritorialAjaxController::resultsByDignity/$1/$2');
 $routes->get('ajax/minute-data/(:num)', 'Web\TerritorialAjaxController::minuteData/$1');

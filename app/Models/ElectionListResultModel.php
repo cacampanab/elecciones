@@ -13,7 +13,7 @@ class ElectionListResultModel extends Model
     protected $useSoftDeletes = false;
     protected $protectFields = false;
     protected $allowedFields = [
-        'polling_station_id', 'election_id', 'canton_id', 'dignity_id', 'candidate_list_id',
+        'polling_station_id', 'election_id', 'canton_id', 'circumscription_id', 'dignity_id', 'candidate_list_id',
         'votes', 'blank_votes', 'null_votes', 'total_voters', 'registered_voters',
         'is_verified', 'verified_by', 'verified_at', 'registered_by', 'latitude', 'longitude',
     ];
@@ -30,14 +30,20 @@ class ElectionListResultModel extends Model
             ->findAll();
     }
 
-    public function totalsForContext(int $electionId, int $cantonId, int $dignityId): array
+    public function totalsForContext(int $electionId, int $cantonId, int $dignityId, ?int $circumscriptionId = null): array
     {
-        $rows = $this->select('candidate_list_id, SUM(votes) AS total_votes', false)
+        $builder = $this->select('candidate_list_id, SUM(votes) AS total_votes', false)
             ->where('election_id', $electionId)
             ->where('canton_id', $cantonId)
-            ->where('dignity_id', $dignityId)
-            ->groupBy('candidate_list_id')
-            ->findAll();
+            ->where('dignity_id', $dignityId);
+
+        if ($circumscriptionId !== null) {
+            $builder->where('circumscription_id', $circumscriptionId);
+        } else {
+            $builder->where('circumscription_id', null);
+        }
+
+        $rows = $builder->groupBy('candidate_list_id')->findAll();
 
         $totals = [];
         foreach ($rows as $row) {

@@ -61,28 +61,64 @@ class TerritorialAjaxController extends BaseWebController
     {
         $station = model('App\Models\PollingStationModel')->find((int)$psId);
         if (!$station) {
-            return $this->response->setJSON(['lists' => [], 'totals' => null]);
+            return $this->response->setJSON([
+                'lists' => [],
+                'totals' => null,
+                'circumscription' => null,
+                'error' => 'JRV no encontrada.',
+            ]);
         }
 
-        $canton = $this->db->table('precincts pr')
-            ->select('c.id AS canton_id')
-            ->join('parishes pa', 'pa.id = pr.parish_id')
-            ->join('cantons c', 'c.id = pa.canton_id')
-            ->where('pr.id', (int)$station->precinct_id)
-            ->get()
-            ->getRow();
-
-        if (!$canton) {
-            return $this->response->setJSON(['lists' => [], 'totals' => null]);
+        $location = $this->stationLocation($station);
+        if (!$location) {
+            return $this->response->setJSON([
+                'lists' => [],
+                'totals' => null,
+                'circumscription' => null,
+                'error' => 'No se pudo determinar el cantón de la JRV.',
+            ]);
         }
 
-        $lists = $this->db->table('candidate_lists cl')
+        $circumscription = null;
+        $hasCircumscriptions = $this->db->table('election_circumscriptions')
+            ->where('election_id', (int)$station->election_id)
+            ->where('canton_id', (int)$location->canton_id)
+            ->where('is_active', 1)
+            ->countAllResults() > 0;
+
+        if ($hasCircumscriptions) {
+            $circumscription = $this->circumscriptionForParish((int)$station->election_id, (int)$location->parish_id);
+            if (!$circumscription) {
+                return $this->response->setJSON([
+                    'lists' => [],
+                    'totals' => null,
+                    'circumscription' => null,
+                    'error' => 'La parroquia ' . $location->parish_name . ' no tiene circunscripción asignada.',
+                ]);
+            }
+            if ((int)$circumscription->dignity_id !== (int)$dignityId) {
+                return $this->response->setJSON([
+                    'lists' => [],
+                    'totals' => null,
+                    'circumscription' => $this->circumscriptionPayload($circumscription),
+                    'error' => 'Esta JRV corresponde a ' . $circumscription->dignity_name . ', no a la dignidad seleccionada.',
+                ]);
+            }
+        }
+
+        $builder = $this->db->table('candidate_lists cl')
             ->select('cl.*, p.name AS party_name, p.acronym AS party_acronym, p.list_number, p.color AS party_color')
             ->join('political_parties p', 'p.id = cl.political_party_id')
             ->where('cl.election_id', (int)$station->election_id)
-            ->where('cl.canton_id', (int)$canton->canton_id)
+            ->where('cl.canton_id', (int)$location->canton_id)
             ->where('cl.dignity_id', (int)$dignityId)
-            ->where('cl.is_active', 1)
+            ->where('cl.is_active', 1);
+
+        if ($circumscription) {
+            $builder->where('cl.circumscription_id', (int)$circumscription->id);
+        }
+
+        $lists = $builder
             ->orderBy('p.list_number', 'ASC')
             ->orderBy('p.name', 'ASC')
             ->get()
@@ -119,7 +155,90 @@ class TerritorialAjaxController extends BaseWebController
         return $this->response->setJSON([
             'lists' => $lists,
             'totals' => $totals,
+            'circumscription' => $circumscription ? $this->circumscriptionPayload($circumscription) : null,
+            'error' => null,
         ]);
+    }
+
+    public function stationCircumscription($psId)
+    {
+        $station = model('App\Models\PollingStationModel')->find((int)$psId);
+        if (!$station) {
+            return $this->response->setJSON([
+                'uses_circumscriptions' => false,
+                'circumscription' => null,
+                'parish' => null,
+                'error' => 'JRV no encontrada.',
+            ]);
+        }
+
+        $location = $this->stationLocation($station);
+        if (!$location) {
+            return $this->response->setJSON([
+                'uses_circumscriptions' => false,
+                'circumscription' => null,
+                'parish' => null,
+                'error' => 'No se pudo determinar la parroquia de la JRV.',
+            ]);
+        }
+
+        $usesCircumscriptions = $this->db->table('election_circumscriptions')
+            ->where('election_id', (int)$station->election_id)
+            ->where('canton_id', (int)$location->canton_id)
+            ->where('is_active', 1)
+            ->countAllResults() > 0;
+
+        $circumscription = $usesCircumscriptions
+            ? $this->circumscriptionForParish((int)$station->election_id, (int)$location->parish_id)
+            : null;
+
+        return $this->response->setJSON([
+            'uses_circumscriptions' => $usesCircumscriptions,
+            'circumscription' => $circumscription ? $this->circumscriptionPayload($circumscription) : null,
+            'parish' => [
+                'id' => (int)$location->parish_id,
+                'name' => $location->parish_name,
+            ],
+            'error' => $usesCircumscriptions && !$circumscription
+                ? 'La parroquia ' . $location->parish_name . ' no tiene circunscripción asignada.'
+                : null,
+        ]);
+    }
+
+    private function stationLocation($station)
+    {
+        return $this->db->table('precincts pr')
+            ->select('pa.id AS parish_id, pa.name AS parish_name, c.id AS canton_id')
+            ->join('parishes pa', 'pa.id = pr.parish_id')
+            ->join('cantons c', 'c.id = pa.canton_id')
+            ->where('pr.id', (int)$station->precinct_id)
+            ->get()
+            ->getRow();
+    }
+
+    private function circumscriptionForParish(int $electionId, int $parishId)
+    {
+        return $this->db->table('election_circumscription_parishes ecp')
+            ->select('ec.id, ec.name, ec.code, ec.dignity_id, d.name AS dignity_name, d.slug AS dignity_slug')
+            ->join('election_circumscriptions ec', 'ec.id = ecp.circumscription_id')
+            ->join('dignities d', 'd.id = ec.dignity_id')
+            ->where('ecp.election_id', $electionId)
+            ->where('ecp.parish_id', $parishId)
+            ->where('ec.is_active', 1)
+            ->get()
+            ->getRow();
+    }
+
+    private function circumscriptionPayload($circumscription): array
+    {
+        return [
+            'id' => (int)$circumscription->id,
+            'name' => $circumscription->name,
+            'code' => $circumscription->code,
+            'dignity_id' => (int)$circumscription->dignity_id,
+            'dignity_name' => $circumscription->dignity_name,
+            'dignity_slug' => $circumscription->dignity_slug,
+        ];
     }
 
     public function stationsByPrecinct()

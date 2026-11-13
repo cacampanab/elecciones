@@ -211,7 +211,7 @@ class ActaService
 
     public function updateStationStatus(int $pollingStationId, int $electionId): void
     {
-        $enabled = $this->enabledDignityIds($electionId);
+        $enabled = $this->applicableDignitiesForStation($pollingStationId, $electionId);
         if (!$enabled) {
             return;
         }
@@ -260,5 +260,76 @@ class ActaService
         }
 
         $this->db->table('polling_stations')->where('id', $pollingStationId)->update(['status' => $status]);
+    }
+
+    /**
+     * Dignidades que realmente aplican a una JRV. En cantones con
+     * circunscripciones, la JRV solo registra la dignidad de su
+     * circunscripción (urbana o rural), no ambas.
+     */
+    private function applicableDignitiesForStation(int $pollingStationId, int $electionId): array
+    {
+        $enabled = $this->enabledDignityIds($electionId);
+        if (!$enabled) {
+            return [];
+        }
+
+        $station = $this->db->table('polling_stations')
+            ->select('id, precinct_id')
+            ->where('id', $pollingStationId)
+            ->get()
+            ->getRow();
+        if (!$station) {
+            return $enabled;
+        }
+
+        $location = $this->db->table('precincts pr')
+            ->select('pa.id AS parish_id, pa.canton_id')
+            ->join('parishes pa', 'pa.id = pr.parish_id')
+            ->where('pr.id', (int)$station->precinct_id)
+            ->get()
+            ->getRow();
+        if (!$location) {
+            return $enabled;
+        }
+
+        $hasCircumscriptions = $this->db->table('election_circumscriptions')
+            ->where('election_id', $electionId)
+            ->where('canton_id', (int)$location->canton_id)
+            ->where('is_active', 1)
+            ->countAllResults() > 0;
+        if (!$hasCircumscriptions) {
+            return $enabled;
+        }
+
+        $concejalRows = $this->db->table('dignities')
+            ->select('id')
+            ->whereIn('slug', ['concejal-urbano', 'concejal-rural'])
+            ->get()
+            ->getResult();
+        $concejalIds = array_map(static fn($row) => (int)$row->id, $concejalRows);
+
+        $circumscription = $this->db->table('election_circumscription_parishes ecp')
+            ->select('ec.dignity_id')
+            ->join('election_circumscriptions ec', 'ec.id = ecp.circumscription_id')
+            ->where('ecp.election_id', $electionId)
+            ->where('ecp.parish_id', (int)$location->parish_id)
+            ->where('ec.is_active', 1)
+            ->get()
+            ->getRow();
+
+        // Si la parroquia no tiene circunscripción, se mantienen ambas
+        // dignidades para que la JRV no aparezca completa por error.
+        if (!$circumscription) {
+            return $enabled;
+        }
+
+        $applicable = array_values(array_filter(
+            $enabled,
+            static fn($id) => !in_array((int)$id, $concejalIds, true)
+        ));
+        $applicable[] = (int)$circumscription->dignity_id;
+
+        return array_values(array_unique($applicable));
     }
 }

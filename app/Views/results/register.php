@@ -115,6 +115,7 @@
                 <option value="">Seleccione una JRV primero...</option>
               </select>
               <div id="dignityStatus" class="mt-2"></div>
+              <div id="circumscriptionStatus" class="mt-1"></div>
             </div>
             <div class="col-md-3">
               <label class="form-label small">Electores en el Acta *</label>
@@ -258,6 +259,7 @@
   let actaProcessing = false;
   let submitting = false;
   let actaSelectionToken = 0;
+  let currentStationCircumscription = null;
 
   const isOperatorUser = <?= is_operator() ? 'true' : 'false' ?>;
   const isSupervisorOrAdminUser = <?= is_supervisor_or_admin() ? 'true' : 'false' ?>;
@@ -564,6 +566,15 @@
     renderActaPreview(null);
     clearActaInputs();
     getLocation();
+
+    currentStationCircumscription = null;
+    try {
+      const responseCircumscription = await fetch(baseUrl + 'ajax/station-circumscription/' + psId);
+      currentStationCircumscription = await responseCircumscription.json();
+    } catch (err) {
+      currentStationCircumscription = null;
+    }
+
     await loadDignities(eid);
     if (isMobileView()) openMobileModal();
   }
@@ -574,18 +585,50 @@
     sel.disabled = true;
     try {
       const r = await fetch(baseUrl + 'ajax/election-dignities/' + electionId);
-      const data = await r.json();
+      let data = await r.json();
+
+      const context = currentStationCircumscription;
+      if (context && context.uses_circumscriptions) {
+        const expectedId = context.circumscription ? parseInt(context.circumscription.dignity_id, 10) : null;
+        data = data.filter(d => {
+          if (d.slug !== 'concejal-urbano' && d.slug !== 'concejal-rural') return true;
+          return expectedId !== null && parseInt(d.id, 10) === expectedId;
+        });
+      }
+
       sel.innerHTML = '<option value="">Seleccione dignidad...</option>';
       data.forEach(d => {
         sel.innerHTML += '<option value="' + d.id + '" data-slug="' + escapeHtml(d.slug || '') + '">' + escapeHtml(d.name) + '</option>';
       });
       sel.disabled = false;
+
+      renderCircumscriptionStatus();
       if (data.length === 1) {
         sel.value = data[0].id;
         await onDignityChange();
       }
     } catch {
       sel.innerHTML = '<option value="">Error al cargar dignidades</option>';
+    }
+  }
+
+  function renderCircumscriptionStatus() {
+    const box = document.getElementById('circumscriptionStatus');
+    if (!box) return;
+
+    const context = currentStationCircumscription;
+    if (!context || !context.uses_circumscriptions) {
+      box.innerHTML = '';
+      return;
+    }
+
+    if (context.circumscription) {
+      box.innerHTML = '<span class="badge bg-info text-dark"><i class="bi bi-diagram-2-fill me-1"></i>'
+        + escapeHtml(context.circumscription.name) + '</span>'
+        + ' <span class="small text-muted">' + escapeHtml(context.circumscription.dignity_name || '') + '</span>';
+    } else {
+      box.innerHTML = '<span class="badge bg-danger">Parroquia sin circunscripción</span>'
+        + ' <span class="small text-danger">' + escapeHtml(context.error || 'No se pueden registrar concejales en esta JRV.') + '</span>';
     }
   }
 
@@ -683,8 +726,10 @@
         const lists = Array.isArray(payload.lists) ? payload.lists : [];
         const minute = await rMinute.json();
 
-        if (!lists.length) {
-          list.innerHTML = '<div class="text-center py-2 text-muted">No hay listas de concejales para el cantón de esta JRV.</div>';
+        if (payload.error) {
+          list.innerHTML = '<div class="text-center py-2 text-danger">' + escapeHtml(payload.error) + '</div>';
+        } else if (!lists.length) {
+          list.innerHTML = '<div class="text-center py-2 text-muted">No hay listas de concejales para la circunscripción de esta JRV.</div>';
         } else {
           list.innerHTML = lists.map(item => {
             const candidates = Array.isArray(item.candidates) ? item.candidates : [];

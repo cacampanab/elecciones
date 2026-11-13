@@ -306,7 +306,7 @@ class ResultController extends BaseWebController
         }
 
         $canton = $this->db->table('precincts pr')
-            ->select('c.id AS canton_id')
+            ->select('pa.id AS parish_id, pa.name AS parish_name, c.id AS canton_id')
             ->join('parishes pa', 'pa.id = pr.parish_id')
             ->join('cantons c', 'c.id = pa.canton_id')
             ->where('pr.id', (int)$station->precinct_id)
@@ -316,16 +316,46 @@ class ResultController extends BaseWebController
             return redirect()->back()->with('error', 'No se pudo determinar el cantón de la JRV.');
         }
 
-        $lists = $this->db->table('candidate_lists')
+        $circumscription = null;
+        $hasCircumscriptions = $this->db->table('election_circumscriptions')
+            ->where('election_id', $electionId)
+            ->where('canton_id', (int)$canton->canton_id)
+            ->where('is_active', 1)
+            ->countAllResults() > 0;
+
+        if ($hasCircumscriptions) {
+            $circumscription = $this->db->table('election_circumscription_parishes ecp')
+                ->select('ec.id, ec.name, ec.dignity_id')
+                ->join('election_circumscriptions ec', 'ec.id = ecp.circumscription_id')
+                ->where('ecp.election_id', $electionId)
+                ->where('ecp.parish_id', (int)$canton->parish_id)
+                ->where('ec.is_active', 1)
+                ->get()
+                ->getRow();
+
+            if (!$circumscription) {
+                return redirect()->back()->with('error', 'La parroquia ' . $canton->parish_name . ' no tiene circunscripción asignada.');
+            }
+            if ((int)$circumscription->dignity_id !== $dignityId) {
+                $expected = model('App\Models\DignityModel')->find((int)$circumscription->dignity_id);
+                return redirect()->back()->with('error', 'Esta JRV corresponde a ' . ($expected->name ?? 'otra dignidad') . ', no a la dignidad seleccionada.');
+            }
+        }
+
+        $listsBuilder = $this->db->table('candidate_lists')
             ->select('id')
             ->where('election_id', $electionId)
             ->where('canton_id', (int)$canton->canton_id)
             ->where('dignity_id', $dignityId)
-            ->where('is_active', 1)
-            ->get()
-            ->getResult();
+            ->where('is_active', 1);
+        if ($circumscription) {
+            $listsBuilder->where('circumscription_id', (int)$circumscription->id);
+        }
+        $lists = $listsBuilder->get()->getResult();
         if (!$lists) {
-            return redirect()->back()->with('error', 'No hay listas de concejales para el cantón de esta JRV.');
+            return redirect()->back()->with('error', $circumscription
+                ? 'No hay listas de concejales para la circunscripción de esta JRV.'
+                : 'No hay listas de concejales para el cantón de esta JRV.');
         }
 
         $validListIds = array_map(static fn($list) => (int)$list->id, $lists);
@@ -457,6 +487,7 @@ class ResultController extends BaseWebController
                     'polling_station_id' => $psId,
                     'election_id' => $electionId,
                     'canton_id' => (int)$canton->canton_id,
+                    'circumscription_id' => $circumscription ? (int)$circumscription->id : null,
                     'dignity_id' => $dignityId,
                     'candidate_list_id' => $listId,
                     'votes' => $votes,

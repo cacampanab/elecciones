@@ -24,6 +24,7 @@ class ConcejalController extends BaseWebController
             $context['electionId'],
             $context['cantonId'],
             $context['dignityId'],
+            $context['circumscriptionId'],
             $context['votesMap']
         );
 
@@ -76,20 +77,30 @@ class ConcejalController extends BaseWebController
             return redirect()->back()->with('error', 'Nombres y apellidos son obligatorios.');
         }
 
-        $list = model('App\Models\CandidateListModel')
+        $listQuery = model('App\Models\CandidateListModel')
             ->where('election_id', $context['electionId'])
             ->where('canton_id', $context['cantonId'])
             ->where('dignity_id', $context['dignityId'])
-            ->where('political_party_id', $partyId)
-            ->first();
+            ->where('political_party_id', $partyId);
+        if ($context['circumscriptionId']) {
+            $listQuery->where('circumscription_id', $context['circumscriptionId']);
+        } else {
+            $listQuery->where('circumscription_id', null);
+        }
+        $list = $listQuery->first();
 
         if (!$list) {
+            $listName = $party->acronym . ' - ' . $context['dignity']->name . ' - ' . $context['canton']->name;
+            if ($context['circumscription']) {
+                $listName .= ' - ' . $context['circumscription']->name;
+            }
             $listId = model('App\Models\CandidateListModel')->insert([
                 'election_id' => $context['electionId'],
                 'canton_id' => $context['cantonId'],
+                'circumscription_id' => $context['circumscriptionId'] ?: null,
                 'political_party_id' => $partyId,
                 'dignity_id' => $context['dignityId'],
-                'name' => $party->acronym . ' - ' . $context['dignity']->name . ' - ' . $context['canton']->name,
+                'name' => $listName,
                 'is_active' => 1,
             ]);
             if (!$listId) {
@@ -174,6 +185,7 @@ class ConcejalController extends BaseWebController
                 ->where('election_id', $context['electionId'])
                 ->where('canton_id', $context['cantonId'])
                 ->where('dignity_id', $context['dignityId'])
+                ->where('circumscription_id', $context['circumscriptionId'] ?: null)
                 ->get()
                 ->getResult()
         );
@@ -271,7 +283,8 @@ class ConcejalController extends BaseWebController
         if (!$list
             || (int)$list->election_id !== $context['electionId']
             || (int)$list->canton_id !== $context['cantonId']
-            || (int)$list->dignity_id !== $context['dignityId']) {
+            || (int)$list->dignity_id !== $context['dignityId']
+            || (int)($list->circumscription_id ?? 0) !== (int)($context['circumscriptionId'] ?? 0)) {
             return redirect()->to($this->contextUrl($context))->with('error', 'El candidato no pertenece a la lista seleccionada.');
         }
 
@@ -301,6 +314,7 @@ class ConcejalController extends BaseWebController
                 ->where('election_id', $context['electionId'])
                 ->where('canton_id', $context['cantonId'])
                 ->where('dignity_id', $context['dignityId'])
+                ->where('circumscription_id', $context['circumscriptionId'] ?: null)
                 ->get()
                 ->getResult()
         );
@@ -318,6 +332,7 @@ class ConcejalController extends BaseWebController
                     ->where('election_id', $context['electionId'])
                     ->where('canton_id', $context['cantonId'])
                     ->where('dignity_id', $context['dignityId'])
+                    ->where('circumscription_id', $context['circumscriptionId'] ?: null)
                     ->where('candidate_list_id', $listId)
                     ->first();
 
@@ -329,6 +344,7 @@ class ConcejalController extends BaseWebController
                     model('App\Models\ElectionListVoteModel')->insert([
                         'election_id' => $context['electionId'],
                         'canton_id' => $context['cantonId'],
+                        'circumscription_id' => $context['circumscriptionId'] ?: null,
                         'dignity_id' => $context['dignityId'],
                         'candidate_list_id' => $listId,
                         'votes' => 0,
@@ -379,13 +395,6 @@ class ConcejalController extends BaseWebController
         if (!$dignityId || !in_array($dignityId, $validDignityIds, true)) {
             $dignityId = (int)($validDignityIds[0] ?? 0);
         }
-        $dignity = null;
-        foreach ($dignities as $item) {
-            if ((int)$item->id === $dignityId) {
-                $dignity = $item;
-                break;
-            }
-        }
 
         $cantons = $this->db->table('cantons c')
             ->select('c.id, c.code, c.name, c.province_id, p.name AS province_name, p.code AS province_code')
@@ -396,15 +405,32 @@ class ConcejalController extends BaseWebController
             ->get()
             ->getResult();
         $validCantonIds = array_map(static fn($canton) => (int)$canton->id, $cantons);
+
         $seatMap = $electionId ? model('App\Models\ElectionSeatModel')->mapForElection($electionId) : [];
+        $circSeatMap = $electionId ? model('App\Models\ElectionSeatModel')->mapForCircumscriptions($electionId) : [];
+
+        $circumscriptionsByCanton = [];
+        if ($electionId) {
+            foreach (model('App\Models\ElectionCircumscriptionModel')->forElection($electionId) as $item) {
+                $circumscriptionsByCanton[(int)$item->canton_id][] = $item;
+            }
+        }
 
         $cantonId = (int)($source['canton_id'] ?? 0);
         if (!$cantonId || !in_array($cantonId, $validCantonIds, true)) {
             $cantonId = 0;
             foreach ($cantons as $item) {
-                if ((int)($seatMap[(int)$item->id][$dignityId] ?? 0) > 0) {
-                    $cantonId = (int)$item->id;
+                $itemId = (int)$item->id;
+                if ((int)($seatMap[$itemId][$dignityId] ?? 0) > 0) {
+                    $cantonId = $itemId;
                     break;
+                }
+                foreach ($circumscriptionsByCanton[$itemId] ?? [] as $circumscription) {
+                    if ((int)$circumscription->dignity_id === $dignityId
+                        && (int)($circSeatMap[(int)$circumscription->id] ?? 0) > 0) {
+                        $cantonId = $itemId;
+                        break 2;
+                    }
                 }
             }
             if (!$cantonId) {
@@ -422,15 +448,65 @@ class ConcejalController extends BaseWebController
         if (!$election) {
             return ['error' => 'No hay una elección válida seleccionada.'];
         }
-        if (!$dignity) {
+        if (!$dignities) {
             return ['error' => 'No están activas las dignidades de concejales.'];
         }
         if (!$canton) {
             return ['error' => 'No hay un cantón válido seleccionado.'];
         }
 
-        $seats = (int)($seatMap[$cantonId][$dignityId] ?? 0);
-        $votesMap = model('App\Models\ElectionListVoteModel')->mapForContext($electionId, $cantonId, $dignityId);
+        $cantonCircumscriptions = $circumscriptionsByCanton[$cantonId] ?? [];
+        $usesCircumscriptions = !empty($cantonCircumscriptions);
+        $circumscription = null;
+        $circumscriptionId = null;
+
+        if ($usesCircumscriptions) {
+            $requestedId = (int)($source['circumscription_id'] ?? 0);
+            foreach ($cantonCircumscriptions as $item) {
+                if ((int)$item->id === $requestedId) {
+                    $circumscription = $item;
+                    break;
+                }
+            }
+            if (!$circumscription) {
+                foreach ($cantonCircumscriptions as $item) {
+                    if ((int)$item->dignity_id === $dignityId) {
+                        $circumscription = $item;
+                        break;
+                    }
+                }
+            }
+            if (!$circumscription) {
+                $circumscription = $cantonCircumscriptions[0];
+            }
+
+            $circumscriptionId = (int)$circumscription->id;
+            $dignityId = (int)$circumscription->dignity_id;
+        }
+
+        $dignity = null;
+        foreach ($dignities as $item) {
+            if ((int)$item->id === $dignityId) {
+                $dignity = $item;
+                break;
+            }
+        }
+        if (!$dignity) {
+            return ['error' => 'No están activas las dignidades de concejales.'];
+        }
+
+        if ($usesCircumscriptions) {
+            $seats = (int)($circSeatMap[$circumscriptionId] ?? 0);
+            $votesMap = model('App\Models\ElectionListVoteModel')->mapForContext(
+                $electionId,
+                $cantonId,
+                $dignityId,
+                $circumscriptionId
+            );
+        } else {
+            $seats = (int)($seatMap[$cantonId][$dignityId] ?? 0);
+            $votesMap = model('App\Models\ElectionListVoteModel')->mapForContext($electionId, $cantonId, $dignityId);
+        }
 
         return [
             'error' => null,
@@ -443,27 +519,39 @@ class ConcejalController extends BaseWebController
             'dignities' => $dignities,
             'dignityId' => $dignityId,
             'dignity' => $dignity,
+            'circumscriptionId' => $circumscriptionId,
+            'circumscription' => $circumscription,
+            'circumscriptions' => $cantonCircumscriptions,
+            'usesCircumscriptions' => $usesCircumscriptions,
             'seats' => $seats,
             'votesMap' => $votesMap,
         ];
     }
 
-    private function listsForContext(int $electionId, int $cantonId, int $dignityId, array $votesMap): array
+    private function listsForContext(int $electionId, int $cantonId, int $dignityId, ?int $circumscriptionId, array $votesMap): array
     {
-        $lists = $this->db->table('candidate_lists cl')
+        $builder = $this->db->table('candidate_lists cl')
             ->select('cl.*, p.name AS party_name, p.acronym AS party_acronym, p.list_number, p.color')
             ->join('political_parties p', 'p.id = cl.political_party_id')
             ->where('cl.election_id', $electionId)
             ->where('cl.canton_id', $cantonId)
             ->where('cl.dignity_id', $dignityId)
-            ->where('cl.is_active', 1)
+            ->where('cl.is_active', 1);
+
+        if ($circumscriptionId !== null) {
+            $builder->where('cl.circumscription_id', $circumscriptionId);
+        } else {
+            $builder->where('cl.circumscription_id', null);
+        }
+
+        $lists = $builder
             ->orderBy('p.list_number', 'ASC')
             ->orderBy('p.name', 'ASC')
             ->get()
             ->getResult();
 
         $resultTotals = model('App\Models\ElectionListResultModel')
-            ->totalsForContext($electionId, $cantonId, $dignityId);
+            ->totalsForContext($electionId, $cantonId, $dignityId, $circumscriptionId);
 
         foreach ($lists as $list) {
             $list->candidates = $this->db->table('candidates')
@@ -544,8 +632,13 @@ class ConcejalController extends BaseWebController
 
     private function contextUrl(array $context): string
     {
-        return base_url('concejales') . '?election_id=' . $context['electionId']
+        $url = base_url('concejales') . '?election_id=' . $context['electionId']
             . '&canton_id=' . $context['cantonId']
             . '&dignity_id=' . $context['dignityId'];
+        if (!empty($context['circumscriptionId'])) {
+            $url .= '&circumscription_id=' . (int)$context['circumscriptionId'];
+        }
+
+        return $url;
     }
 }
