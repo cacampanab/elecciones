@@ -3,6 +3,7 @@
 namespace App\Controllers\Api;
 
 use App\Controllers\BaseController;
+use App\Libraries\SessionService;
 
 class AuthController extends BaseController
 {
@@ -31,20 +32,49 @@ class AuthController extends BaseController
             return errorResponse('Credenciales inválidas', 401);
         }
 
+        $service = new SessionService();
+        $active = $service->activeForUser((int)$user->id);
+        $confirm = (int)$this->request->getVar('confirm_session') === 1;
+
+        if ($active && !$confirm) {
+            return service('response')
+                ->setStatusCode(409)
+                ->setJSON([
+                    'success' => false,
+                    'code' => 'session_conflict',
+                    'message' => 'Este usuario ya tiene una sesión activa. Confirme para cerrarla y continuar.',
+                    'requires_confirmation' => true,
+                    'active_session' => $service->info($active[0]),
+                ]);
+        }
+
+        if ($active && $confirm) {
+            $service->revokeAllForUser((int)$user->id, (int)$user->id, 'other_login');
+        }
+
+        $service->cleanup();
+
+        $created = $service->createSession(
+            (int)$user->id,
+            $this->request->getIPAddress(),
+            (string)$this->request->getUserAgent()
+        );
+
         $this->userModel->update($user->id, ['last_login' => date('Y-m-d H:i:s')]);
 
-        $token = generateJWT($user);
+        $token = generateJWT($user, (int)$created['id']);
         $refreshToken = generateRefreshToken();
 
         $refreshModel = model('App\Models\RefreshTokenModel');
         $refreshModel->insert([
             'user_id' => $user->id,
+            'session_id' => (int)$created['id'],
             'token' => password_hash($refreshToken, PASSWORD_BCRYPT),
             'expires_at' => date('Y-m-d H:i:s', time() + 2592000),
             'created_at' => date('Y-m-d H:i:s'),
         ]);
 
-        $this->logAudit('login', 'users', $user->id);
+        $this->auditModel->log((int)$user->id, 'login', 'users', (int)$user->id);
 
         return jsonResponse([
             'token' => $token,
@@ -98,12 +128,58 @@ class AuthController extends BaseController
             return errorResponse('Usuario no disponible', 401);
         }
 
-        $newToken = generateJWT($user);
+        $service = new SessionService();
+        $sessionId = (int)($validToken->session_id ?? 0);
+
+        if ($sessionId > 0) {
+            $sessionRow = $service->findById($sessionId);
+
+            if (!$sessionRow) {
+                $refreshModel->update($validToken->id, ['revoked' => 1]);
+                return service('response')
+                    ->setStatusCode(401)
+                    ->setJSON([
+                        'success' => false,
+                        'code' => 'session_expired',
+                        'message' => 'La sesión expiró o fue cerrada. Inicie sesión nuevamente.',
+                    ]);
+            }
+
+            $reason = $service->validate($sessionRow, (int)$user->id);
+            if ($reason !== null) {
+                $refreshModel->update($validToken->id, ['revoked' => 1]);
+                return service('response')
+                    ->setStatusCode(401)
+                    ->setJSON([
+                        'success' => false,
+                        'code' => 'session_expired',
+                        'message' => 'La sesión expiró o fue cerrada. Inicie sesión nuevamente.',
+                    ]);
+            }
+        } else {
+            $active = $service->activeForUser((int)$user->id);
+            if ($active) {
+                $sessionRow = $active[0];
+                $sessionId = (int)$sessionRow->id;
+            } else {
+                $created = $service->createSession(
+                    (int)$user->id,
+                    $this->request->getIPAddress(),
+                    (string)$this->request->getUserAgent()
+                );
+                $sessionId = (int)$created['id'];
+                $sessionRow = $service->findById($sessionId);
+            }
+        }
+
+        $service->touch($sessionRow);
+        $newToken = generateJWT($user, $sessionId);
         $newRefreshToken = generateRefreshToken();
 
         $refreshModel->update($validToken->id, ['revoked' => 1]);
         $refreshModel->insert([
             'user_id' => $user->id,
+            'session_id' => $sessionId,
             'token' => password_hash($newRefreshToken, PASSWORD_BCRYPT),
             'expires_at' => date('Y-m-d H:i:s', time() + 2592000),
             'created_at' => date('Y-m-d H:i:s'),
@@ -152,6 +228,14 @@ class AuthController extends BaseController
     public function logout()
     {
         $userId = $this->getUserId();
+        $service = new SessionService();
+
+        if (isset($this->request->user->sid) && (int)$this->request->user->sid > 0) {
+            $service->revokeById((int)$this->request->user->sid, $userId, 'logout');
+        } elseif (isset($this->request->sessionRow) && $this->request->sessionRow) {
+            $service->revokeById((int)$this->request->sessionRow->id, $userId, 'logout');
+        }
+
         $refreshModel = model('App\Models\RefreshTokenModel');
         $refreshModel->where('user_id', $userId)->set(['revoked' => 1])->update();
 

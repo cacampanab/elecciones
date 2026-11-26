@@ -40,8 +40,10 @@ class Session extends BaseConfig
      *
      * The number of SECONDS you want the session to last.
      * Setting to 0 (zero) means expire when the browser is closed.
+     *
+     * 1800 = 30 minutos de inactividad, alineado con SessionService.
      */
-    public int $expiration = 7200;
+    public int $expiration = 1800;
 
     /**
      * --------------------------------------------------------------------------

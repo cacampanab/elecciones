@@ -3,7 +3,7 @@
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 
-function generateJWT($user)
+function generateJWT($user, ?int $sessionId = null)
 {
     $key = getenv('JWT_SECRET_KEY') ?: 'elecciones2026_secure_jwt_secret_key_ec';
     $expiration = (int)(getenv('JWT_EXPIRATION') ?: 3600);
@@ -17,6 +17,10 @@ function generateJWT($user)
         'role' => $user->role_name ?? '',
         'role_id' => $user->role_id,
     ];
+
+    if ($sessionId !== null) {
+        $payload['sid'] = $sessionId;
+    }
 
     return JWT::encode($payload, $key, 'HS256');
 }

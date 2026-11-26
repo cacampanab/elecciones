@@ -14,6 +14,8 @@ $routes->set404Override();
 $routes->get('/', 'Web\AuthController::loginForm');
 $routes->get('login', 'Web\AuthController::loginForm');
 $routes->post('auth/login', 'Web\AuthController::login');
+$routes->post('auth/login/confirm', 'Web\AuthController::confirmLogin');
+$routes->post('auth/login/cancel', 'Web\AuthController::cancelLogin');
 $routes->get('logout', 'Web\AuthController::logout');
 
 $routes->get('dashboard', 'Web\DashboardController::index');

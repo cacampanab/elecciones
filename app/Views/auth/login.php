@@ -24,6 +24,23 @@
       <h2>Sistema de Control Electoral</h2>
       <p>Ingrese sus credenciales para acceder</p>
     </div>
+    <?php
+    $reason = $reason ?? null;
+    $reasonMessages = [
+      'other_login' => 'Su sesión se cerró porque este usuario inició sesión en otro dispositivo.',
+      'admin' => 'Su sesión fue cerrada por un administrador.',
+      'expired' => 'Su sesión expiró por inactividad. Vuelva a ingresar.',
+      'user_inactive' => 'Su usuario ya no está activo. Contacte al administrador.',
+      'session_closed' => 'Su sesión ya no está activa. Vuelva a ingresar.',
+      'logged_out' => 'Sesión cerrada correctamente.',
+    ];
+    ?>
+    <?php if ($reason && isset($reasonMessages[$reason])): ?>
+      <div class="alert alert-<?= $reason === 'logged_out' ? 'success' : 'warning' ?> py-2 small"><?= esc($reasonMessages[$reason]) ?></div>
+    <?php endif; ?>
+    <?php if (session()->has('success')): ?>
+      <div class="alert alert-success py-2 small"><?= esc(session('success')) ?></div>
+    <?php endif; ?>
     <?php if (session()->has('error')): ?>
       <div class="alert alert-danger py-2 small"><?= esc(session('error')) ?></div>
     <?php endif; ?>

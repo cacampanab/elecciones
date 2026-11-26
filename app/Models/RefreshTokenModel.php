@@ -12,7 +12,7 @@ class RefreshTokenModel extends Model
     protected $returnType = 'object';
     protected $useSoftDeletes = false;
     protected $protectFields = false;
-    protected $allowedFields = ['user_id', 'token', 'expires_at', 'revoked'];
+    protected $allowedFields = ['user_id', 'session_id', 'token', 'expires_at', 'revoked'];
     protected $useTimestamps = true;
     protected $dateFormat = 'datetime';
     protected $createdField = 'created_at';

@@ -37,6 +37,7 @@ class Filters extends BaseFilters
         'jwtauth'       => \App\Filters\JWTAuthFilter::class,
         'role'          => \App\Filters\RoleFilter::class,
         'corsapi'       => \App\Filters\CorsFilter::class,
+        'sessionguard'  => \App\Filters\SessionGuardFilter::class,
     ];
 
     /**
@@ -75,6 +76,7 @@ class Filters extends BaseFilters
      */
     public array $globals = [
         'before' => [
+            'sessionguard' => ['except' => ['login', 'login/*', 'auth/*', 'logout', 'api/*']],
             // 'honeypot',
             // 'csrf',
             // 'invalidchars',

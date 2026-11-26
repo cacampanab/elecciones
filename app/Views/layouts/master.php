@@ -299,6 +299,20 @@
   </style>
   <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script>
+    (function () {
+      const originalFetch = window.fetch;
+      window.fetch = function () {
+        return originalFetch.apply(this, arguments).then(function (response) {
+          if (response.status === 401) {
+            window.location.href = '<?= base_url('login?reason=session_closed') ?>';
+            return Promise.reject(new Error('session_expired'));
+          }
+          return response;
+        });
+      };
+    })();
+  </script>
 </head>
 
 <body>
