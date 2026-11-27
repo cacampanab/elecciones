@@ -1,12 +1,12 @@
 <?= $this->extend('layouts/master') ?>
 <?= $this->section('content') ?>
 <div class="content-header">
-  <h1>Registrar Resultados Electorales</h1>
+  <h1><?= !empty($prefillStation) ? 'Llenar Acta' : 'Registrar Resultados Electorales' ?></h1>
 </div>
 
 <div class="row g-3">
   <!-- LEFT: Station selector -->
-  <div class="col-md-4">
+  <div class="<?= !empty($prefillStation) ? 'd-none' : 'col-md-4' ?>">
     <?php if (is_supervisor_or_admin()): ?>
       <!-- Admin/Supervisor: hierarchical filter -->
       <div class="card">
@@ -87,7 +87,7 @@
   </div>
 
   <!-- RIGHT: Registration form -->
-  <div class="col-md-8" id="formCol">
+  <div class="<?= !empty($prefillStation) ? 'col-md-12' : 'col-md-8' ?>" id="formCol">
     <div class="card" id="noSelection">
       <div class="card-body text-center text-muted py-5">
         <i class="bi bi-hand-index fs-1"></i><br>Seleccione una JRV para registrar resultados
@@ -210,6 +210,11 @@
           <button type="submit" id="btnSaveResults" class="btn btn-primary mt-3 w-100 btn-lg">
             <i class="bi bi-save me-1"></i>Guardar Resultados
           </button>
+          <?php if (!empty($prefillStation)): ?>
+          <a href="<?= esc($returnTo, 'attr') ?>" class="btn btn-outline-secondary mt-2 w-100">
+            <i class="bi bi-arrow-left me-1"></i>Cancelar y volver a Actas
+          </a>
+          <?php endif; ?>
         </form>
       </div>
     </div>
@@ -926,5 +931,34 @@
     }
   });
   getLocation();
+
+  <?php if (!empty($prefillStation)): ?>
+  document.addEventListener('DOMContentLoaded', function () {
+    (async function () {
+      await selectStation(
+        <?= (int)$prefillStation->id ?>,
+        <?= json_encode($prefillStation->numero_junta) ?>,
+        <?= json_encode($prefillStation->genero) ?>,
+        <?= json_encode($prefillStation->name_province) ?>,
+        <?= json_encode($prefillStation->name_canton) ?>,
+        <?= json_encode($prefillStation->name_parish) ?>,
+        <?= json_encode($prefillStation->name_precinct) ?>,
+        <?= (int)$prefillStation->numero_electores ?>,
+        <?= (int)$prefillStation->election_id ?>
+      );
+
+      <?php if (!empty($prefillDignityId)): ?>
+      const prefillDignitySelect = document.getElementById('selDignity');
+      const prefillDignityOption = [...prefillDignitySelect.options].find(
+        option => parseInt(option.value, 10) === <?= (int)$prefillDignityId ?>
+      );
+      if (prefillDignityOption) {
+        prefillDignitySelect.value = prefillDignityOption.value;
+        await onDignityChange();
+      }
+      <?php endif; ?>
+    })();
+  });
+  <?php endif; ?>
 </script>
 <?= $this->endSection() ?>

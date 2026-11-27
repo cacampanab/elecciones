@@ -18,10 +18,75 @@ class MinuteController extends BaseWebController
         $missing = (int)($this->request->getGet('missing') ?? 0);
         $search = trim((string)($this->request->getGet('q') ?? ''));
 
+        $provinceId = (int)($this->request->getGet('province_id') ?? 0);
+        $cantonId = (int)($this->request->getGet('canton_id') ?? 0);
+        $parishId = (int)($this->request->getGet('parish_id') ?? 0);
+        $precinctId = (int)($this->request->getGet('precinct_id') ?? 0);
+
         $elections = model('App\Models\ElectionModel')->getActive();
         if (!$electionId) {
             $current = model('App\Models\ElectionModel')->getCurrent();
             $electionId = $current ? (int)$current->id : (int)($elections[0]->id ?? 0);
+        }
+
+        $provinces = model('App\Models\ProvinceModel')
+            ->where('is_active', 1)
+            ->orderBy('name', 'ASC')
+            ->findAll();
+        $validProvinceIds = array_map(static fn($province) => (int)$province->id, $provinces);
+        if ($provinceId && !in_array($provinceId, $validProvinceIds, true)) {
+            $provinceId = 0;
+        }
+        if (!$provinceId) {
+            $cantonId = 0;
+            $parishId = 0;
+            $precinctId = 0;
+        }
+
+        $cantons = [];
+        if ($provinceId) {
+            $cantons = model('App\Models\CantonModel')
+                ->where('province_id', $provinceId)
+                ->where('is_active', 1)
+                ->orderBy('name', 'ASC')
+                ->findAll();
+            $validCantonIds = array_map(static fn($canton) => (int)$canton->id, $cantons);
+            if ($cantonId && !in_array($cantonId, $validCantonIds, true)) {
+                $cantonId = 0;
+            }
+            if (!$cantonId) {
+                $parishId = 0;
+                $precinctId = 0;
+            }
+        }
+
+        $parishes = [];
+        if ($cantonId) {
+            $parishes = model('App\Models\ParishModel')
+                ->where('canton_id', $cantonId)
+                ->where('is_active', 1)
+                ->orderBy('name', 'ASC')
+                ->findAll();
+            $validParishIds = array_map(static fn($parish) => (int)$parish->id, $parishes);
+            if ($parishId && !in_array($parishId, $validParishIds, true)) {
+                $parishId = 0;
+            }
+            if (!$parishId) {
+                $precinctId = 0;
+            }
+        }
+
+        $precincts = [];
+        if ($parishId) {
+            $precincts = model('App\Models\PrecinctModel')
+                ->where('parish_id', $parishId)
+                ->where('is_active', 1)
+                ->orderBy('name', 'ASC')
+                ->findAll();
+            $validPrecinctIds = array_map(static fn($precinct) => (int)$precinct->id, $precincts);
+            if ($precinctId && !in_array($precinctId, $validPrecinctIds, true)) {
+                $precinctId = 0;
+            }
         }
 
         $service = new ActaService();
@@ -42,7 +107,7 @@ class MinuteController extends BaseWebController
         }
 
         if ($missing && $electionId) {
-            $minutes = $this->missingActas($electionId, $dignityId, $search, $assignedIds);
+            $minutes = $this->missingActas($electionId, $dignityId, $search, $assignedIds, $provinceId, $cantonId, $parishId, $precinctId);
         } else {
             $builder = model('App\Models\UploadedMinuteModel')
                 ->select('uploaded_minutes.*, d.name AS dignity_name, users.first_name, users.last_name, polling_stations.numero_junta, polling_stations.genero, polling_stations.name_province, polling_stations.name_canton, polling_stations.name_parish, polling_stations.name_precinct, elections.name as election_name')
@@ -70,6 +135,21 @@ class MinuteController extends BaseWebController
                     ->orLike('polling_stations.name_precinct', $search)
                     ->groupEnd();
             }
+            if ($provinceId || $cantonId || $parishId || $precinctId) {
+                $builder->join('precincts fpr', 'fpr.id = polling_stations.precinct_id');
+                $builder->join('parishes fpa', 'fpa.id = fpr.parish_id');
+                $builder->join('cantons fca', 'fca.id = fpa.canton_id');
+
+                if ($precinctId) {
+                    $builder->where('polling_stations.precinct_id', $precinctId);
+                } elseif ($parishId) {
+                    $builder->where('fpr.parish_id', $parishId);
+                } elseif ($cantonId) {
+                    $builder->where('fpa.canton_id', $cantonId);
+                } elseif ($provinceId) {
+                    $builder->where('fca.province_id', $provinceId);
+                }
+            }
             if ($assignedIds !== null) {
                 if (!$assignedIds) {
                     $builder->where('uploaded_minutes.id', -1);
@@ -81,11 +161,36 @@ class MinuteController extends BaseWebController
             $minutes = $builder->findAll();
         }
 
-        return $this->render('minutes/index', compact('minutes', 'elections', 'dignities', 'electionId', 'dignityId', 'status', 'missing', 'search'), 'Actas');
+        return $this->render('minutes/index', compact(
+            'minutes',
+            'elections',
+            'dignities',
+            'electionId',
+            'dignityId',
+            'status',
+            'missing',
+            'search',
+            'provinces',
+            'cantons',
+            'parishes',
+            'precincts',
+            'provinceId',
+            'cantonId',
+            'parishId',
+            'precinctId'
+        ), 'Actas');
     }
 
-    private function missingActas(int $electionId, int $dignityId, string $search, ?array $assignedIds): array
-    {
+    private function missingActas(
+        int $electionId,
+        int $dignityId,
+        string $search,
+        ?array $assignedIds,
+        int $provinceId = 0,
+        int $cantonId = 0,
+        int $parishId = 0,
+        int $precinctId = 0
+    ): array {
         $sql = 'SELECT ps.*, ps.id AS polling_station_id, ed.dignity_id, d.name AS dignity_name, e.name AS election_name,
                        NULL AS id, NULL AS file_type, NULL AS file_size, NULL AS created_at, NULL AS original_name,
                        NULL AS first_name, NULL AS last_name, NULL AS status, NULL AS consistency_status
@@ -97,7 +202,29 @@ class MinuteController extends BaseWebController
                     AND um.election_id = ps.election_id
                     AND um.dignity_id = ed.dignity_id
                     AND um.is_current = 1
-                WHERE ps.election_id = ? AND um.id IS NULL';
+                JOIN precincts fpr ON fpr.id = ps.precinct_id
+                JOIN parishes fpa ON fpa.id = fpr.parish_id
+                JOIN cantons fca ON fca.id = fpa.canton_id
+                WHERE ps.election_id = ? AND um.id IS NULL
+                  AND (
+                    d.slug NOT IN (\'concejal-urbano\', \'concejal-rural\')
+                    OR EXISTS (
+                      SELECT 1
+                      FROM election_circumscription_parishes ecp
+                      JOIN election_circumscriptions ec ON ec.id = ecp.circumscription_id
+                      WHERE ecp.election_id = ps.election_id
+                        AND ecp.parish_id = fpr.parish_id
+                        AND ec.dignity_id = ed.dignity_id
+                        AND ec.is_active = 1
+                    )
+                    OR NOT EXISTS (
+                      SELECT 1
+                      FROM election_circumscriptions ec2
+                      WHERE ec2.election_id = ps.election_id
+                        AND ec2.canton_id = fca.id
+                        AND ec2.is_active = 1
+                    )
+                  )';
         $params = [$electionId];
 
         if ($dignityId) {
@@ -108,6 +235,19 @@ class MinuteController extends BaseWebController
             $sql .= ' AND (ps.numero_junta LIKE ? OR ps.name_precinct LIKE ?)';
             $params[] = '%' . $search . '%';
             $params[] = '%' . $search . '%';
+        }
+        if ($precinctId) {
+            $sql .= ' AND ps.precinct_id = ?';
+            $params[] = $precinctId;
+        } elseif ($parishId) {
+            $sql .= ' AND fpr.parish_id = ?';
+            $params[] = $parishId;
+        } elseif ($cantonId) {
+            $sql .= ' AND fpa.canton_id = ?';
+            $params[] = $cantonId;
+        } elseif ($provinceId) {
+            $sql .= ' AND fca.province_id = ?';
+            $params[] = $provinceId;
         }
         if ($assignedIds !== null) {
             if (!$assignedIds) {

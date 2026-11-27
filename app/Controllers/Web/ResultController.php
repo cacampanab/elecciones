@@ -30,7 +30,39 @@ class ResultController extends BaseWebController
         $dignities = model('App\Models\DignityModel')->where('is_active', 1)->findAll();
         $elections = model('App\Models\ElectionModel')->getActive();
         $provinces = model('App\Models\ProvinceModel')->where('is_active', 1)->findAll();
-        return $this->render('results/register', compact('myStations', 'dignities', 'elections', 'provinces'), 'Registrar Resultados');
+
+        $prefillStation = null;
+        $prefillDignityId = 0;
+        $prefillStationId = (int)($this->request->getGet('polling_station_id') ?? 0);
+        if ($prefillStationId) {
+            $prefillStation = model('App\Models\PollingStationModel')->find($prefillStationId);
+            if ($prefillStation) {
+                $prefillDignityId = (int)($this->request->getGet('dignity_id') ?? 0);
+            }
+        }
+
+        $returnTo = base_url('minutes');
+        if (!empty($prefillStation)) {
+            $returnTo = base_url('minutes?election_id=' . (int)$prefillStation->election_id . '&missing=1');
+            $requestedReturn = trim((string)($this->request->getGet('return_to') ?? ''));
+            $baseMinutes = base_url('minutes');
+            if ($requestedReturn !== ''
+                && str_starts_with($requestedReturn, $baseMinutes)
+                && (strlen($requestedReturn) === strlen($baseMinutes)
+                    || in_array($requestedReturn[strlen($baseMinutes)], ['?', '/'], true))) {
+                $returnTo = $requestedReturn;
+            }
+        }
+
+        return $this->render('results/register', compact(
+            'myStations',
+            'dignities',
+            'elections',
+            'provinces',
+            'prefillStation',
+            'prefillDignityId',
+            'returnTo'
+        ), 'Registrar Resultados');
     }
 
     public function save()
