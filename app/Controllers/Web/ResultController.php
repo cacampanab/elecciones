@@ -44,12 +44,8 @@ class ResultController extends BaseWebController
         $returnTo = base_url('minutes');
         if (!empty($prefillStation)) {
             $returnTo = base_url('minutes?election_id=' . (int)$prefillStation->election_id . '&missing=1');
-            $requestedReturn = trim((string)($this->request->getGet('return_to') ?? ''));
-            $baseMinutes = base_url('minutes');
-            if ($requestedReturn !== ''
-                && str_starts_with($requestedReturn, $baseMinutes)
-                && (strlen($requestedReturn) === strlen($baseMinutes)
-                    || in_array($requestedReturn[strlen($baseMinutes)], ['?', '/'], true))) {
+            $requestedReturn = $this->minutesReturnUrl($this->request->getGet('return_to'));
+            if ($requestedReturn !== null) {
                 $returnTo = $requestedReturn;
             }
         }
@@ -94,6 +90,8 @@ class ResultController extends BaseWebController
         $longitude = $this->request->getPost('longitude') ?: null;
         $notes = trim((string)$this->request->getPost('notes'));
         $reason = trim((string)$this->request->getPost('reason'));
+        $successRedirect = $this->minutesReturnUrl($this->request->getPost('return_to'))
+            ?? base_url('results/register');
 
         if (!$psId || !$electionId || !$dignityId) {
             return redirect()->back()->with('error', 'Datos incompletos: seleccione la JRV y la dignidad.');
@@ -121,7 +119,8 @@ class ResultController extends BaseWebController
                 $latitude,
                 $longitude,
                 $notes,
-                $reason
+                $reason,
+                $successRedirect
             );
         }
 
@@ -328,7 +327,7 @@ class ResultController extends BaseWebController
             $msg .= ' El acta fue desverificada por la edición.';
         }
 
-        return redirect()->to(base_url('results/register'))
+        return redirect()->to($successRedirect)
             ->with($consistency['status'] === 'error' ? 'warning' : 'success', $msg);
     }
 
@@ -344,7 +343,8 @@ class ResultController extends BaseWebController
         ?string $latitude,
         ?string $longitude,
         string $notes,
-        string $reason
+        string $reason,
+        string $successRedirect
     ) {
         $station = model('App\Models\PollingStationModel')->find($psId);
         if (!$station || (int)$station->election_id !== $electionId) {
@@ -626,7 +626,7 @@ class ResultController extends BaseWebController
             $msg .= ' Advertencia: ' . implode(' | ', $consistency['warnings']);
         }
 
-        return redirect()->to(base_url('results/register'))
+        return redirect()->to($successRedirect)
             ->with($consistency['status'] === 'error' ? 'warning' : 'success', $msg);
     }
 
@@ -682,6 +682,28 @@ class ResultController extends BaseWebController
         }
 
         return ' No se recibió ningún archivo. Vuelva a seleccionar la foto o el archivo.';
+    }
+
+    /**
+     * Valida que el retorno sea una URL interna de Actas.
+     */
+    private function minutesReturnUrl($requested): ?string
+    {
+        $requested = trim((string)$requested);
+        if ($requested === '') {
+            return null;
+        }
+
+        $base = base_url('minutes');
+        if (!str_starts_with($requested, $base)) {
+            return null;
+        }
+        if (strlen($requested) > strlen($base)
+            && !in_array($requested[strlen($base)], ['?', '/'], true)) {
+            return null;
+        }
+
+        return $requested;
     }
 
     /**

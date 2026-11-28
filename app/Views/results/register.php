@@ -107,6 +107,9 @@
           <input type="hidden" name="dignity_id" id="fDignityId">
           <input type="hidden" name="latitude" id="fLat">
           <input type="hidden" name="longitude" id="fLng">
+          <?php if (!empty($prefillStation)): ?>
+          <input type="hidden" name="return_to" value="<?= esc($returnTo, 'attr') ?>">
+          <?php endif; ?>
 
           <div class="row g-2 mb-3">
             <div class="mb-3">
